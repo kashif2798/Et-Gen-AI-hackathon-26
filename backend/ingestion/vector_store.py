@@ -27,6 +27,12 @@ try:
 except ImportError:
     SentenceTransformer = None
 
+try:
+    from fastembed import TextEmbedding
+except ImportError:
+    TextEmbedding = None
+
+
 from models.schemas import ArticleChunk, SearchResult
 
 
@@ -63,9 +69,15 @@ class ETNexusVectorStore:
         if SentenceTransformer is not None:
             print(f"🧠 Loading embedding model: {EMBEDDING_MODEL}")
             self.embedder = SentenceTransformer(EMBEDDING_MODEL)
+            self.embedder_type = "sentence-transformers"
+        elif TextEmbedding is not None:
+            print(f"🧠 Loading lightweight embedding model via fastembed: {EMBEDDING_MODEL}")
+            self.embedder = TextEmbedding(model_name=EMBEDDING_MODEL)
+            self.embedder_type = "fastembed"
         else:
-            print("⚠️  sentence-transformers not available. Embedding disabled.")
+            print("⚠️  No embedding library available. Embedding disabled.")
             self.embedder = None
+            self.embedder_type = None
 
         # Ensure collection exists
         self._ensure_collection()
@@ -96,11 +108,19 @@ class ETNexusVectorStore:
             print(f"✅ Collection '{self.collection_name}' already exists")
 
     def _embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Embeds a list of texts using sentence-transformers."""
+        """Embeds a list of texts using sentence-transformers or fastembed."""
         if self.embedder is None:
             raise RuntimeError("Embedding model not available")
-        embeddings = self.embedder.encode(texts, show_progress_bar=True, normalize_embeddings=True)
-        return embeddings.tolist()
+        
+        if self.embedder_type == "sentence-transformers":
+            embeddings = self.embedder.encode(texts, show_progress_bar=True, normalize_embeddings=True)
+            return embeddings.tolist()
+        elif self.embedder_type == "fastembed":
+            # fastembed.embed returns a generator of numpy arrays
+            embeddings = list(self.embedder.embed(texts))
+            return [e.tolist() for e in embeddings]
+        else:
+            raise RuntimeError("Unknown embedder type")
 
     def ingest_chunks(self, chunks: list[ArticleChunk]) -> int:
         """

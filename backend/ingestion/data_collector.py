@@ -160,7 +160,7 @@ class DataCollector:
                                 image_url=image_url,
                                 url=article_url,
                                 tags=tags,
-                                source="Economic Times"
+                                source="News Source"
                             )
                             articles.append(article)
                         
@@ -272,7 +272,7 @@ class DataCollector:
             articles = []
             for item in raw_articles:
                 if "source" not in item:
-                    item["source"] = "Economic Times"
+                    item["source"] = "News Source"
                 articles.append(ScrapedArticle(**item))
             
             logger.info(f"✅ Loaded {len(articles)} articles from fallback dataset")

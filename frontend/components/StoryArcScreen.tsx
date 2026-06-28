@@ -84,9 +84,16 @@ export function StoryArcScreen({ persona, articles, onBack }: StoryArcScreenProp
     setLoading(true);
     setError(null);
 
+    // Create abort controller with proper cleanup
+    const controller = new AbortController();
+    let timeoutId: NodeJS.Timeout | null = null;
+
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 second timeout for GraphRAG
+      // Set timeout after controller is ready
+      timeoutId = setTimeout(() => {
+        console.log("⏰ GraphRAG request timeout - aborting after 120 seconds");
+        controller.abort();
+      }, 120000); // 120 second timeout for GraphRAG
 
       const response = await fetch(`${API_BASE}/api/story-arc/extract`, {
         method: 'POST',
@@ -99,10 +106,14 @@ export function StoryArcScreen({ persona, articles, onBack }: StoryArcScreenProp
         signal: controller.signal
       });
 
-      clearTimeout(timeoutId);
+      // Clear timeout on success
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
 
       if (!response.ok) {
-        throw new Error(`Knowledge Nexus Offline: ${response.statusText}`);
+        throw new Error(`Knowledge Service Offline: ${response.statusText}`);
       }
 
       const data = await response.json();
@@ -122,16 +133,29 @@ export function StoryArcScreen({ persona, articles, onBack }: StoryArcScreenProp
         setContrarianPairs(contrarianData.contrarian_pairs || []);
       }
 
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Signal Lost: Network instability detected');
-      console.error('Error fetching story arc:', err);
+    } catch (err: any) {
+      // Clear timeout on error
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      
+      // Better error handling
+      if (err.name === 'AbortError') {
+        setError('Request timed out after 2 minutes. GraphRAG processing may take longer for complex queries.');
+        console.error('⏰ Story arc request timed out');
+      } else {
+        setError(err instanceof Error ? err.message : 'Signal Lost: Network instability detected');
+        console.error('❌ Error fetching story arc:', err);
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchStoryArc();
+    // Don't fetch story arc automatically - user should select articles first
+    // Only fetch available articles for selection
     fetchAvailableArticles();
   }, []);
 
@@ -177,36 +201,35 @@ export function StoryArcScreen({ persona, articles, onBack }: StoryArcScreenProp
       className="fixed inset-0 z-[60] bg-[#F8FAFC] text-slate-800 flex flex-col overflow-hidden"
     >
       {/* ── Header ── */}
-      <header className="px-6 py-4 bg-white border-b border-slate-200 shadow-sm flex items-center justify-between z-10">
+      <header className="px-6 py-3 bg-white/80 backdrop-blur-xl backdrop-saturate-150 border-b border-[#d2d2d7]/60 flex items-center justify-between z-10">
         <div className="flex items-center gap-6">
           <button
             onClick={onBack}
-            className="p-2 hover:bg-slate-100 border border-slate-100 rounded-lg transition-colors group"
+            className="p-2 hover:bg-[#F5F5F7] border border-[#e8e8ed] rounded-lg transition-colors group"
           >
-            <ArrowLeft className="w-5 h-5 text-slate-400 group-hover:text-[#ED1C24]" />
+            <ArrowLeft className="w-5 h-5 text-[#6e6e73] group-hover:text-[#ED1C24]" />
           </button>
           
           <div className="flex flex-col">
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-[#ED1C24] rounded-full" />
-              <h1 className="text-xl font-black tracking-tighter uppercase font-serif">Story Arc <span className="text-[#ED1C24]">Tracker</span></h1>
+              <h1 className="text-lg font-semibold tracking-tight text-[#1d1d1f]">Story Arc Tracker</h1>
             </div>
-            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest flex items-center gap-2">
-              <Globe className="w-3 h-3" /> Nexus Intelligence Unit • GraphRAG Service
+            <p className="section-eyebrow flex items-center gap-2">
+              <Globe className="w-3 h-3" /> E-newspaper Intelligence • GraphRAG Service
             </p>
           </div>
         </div>
 
         <form onSubmit={handleSearch} className="flex-1 max-w-xl mx-8 relative group">
           <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
-            <Search className="w-4 h-4 text-slate-400 group-focus-within:text-[#ED1C24] transition-colors" />
+            <Search className="w-4 h-4 text-[#6e6e73] group-focus-within:text-[#ED1C24] transition-colors" />
           </div>
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Query the knowledge graph (e.g. 'Tata Motors EV strategy')"
-            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#ED1C24]/20 focus:border-[#ED1C24] focus:bg-white transition-all placeholder-slate-400"
+            className="w-full pl-12 pr-4 py-2.5 bg-[#F5F5F7] border border-[#e8e8ed] rounded-xl text-[0.9375rem] font-normal focus:outline-none focus:ring-2 focus:ring-[#ED1C24]/20 focus:border-[#ED1C24] focus:bg-white transition-all placeholder-[#aeaeb2]"
           />
         </form>
 
@@ -214,11 +237,11 @@ export function StoryArcScreen({ persona, articles, onBack }: StoryArcScreenProp
            <button
              type="button"
              onClick={() => setArticlesDialogOpen(true)}
-             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-[11px] font-semibold text-slate-700 hover:border-[#ED1C24]/40 hover:bg-red-50/50 transition-colors"
+             className="inline-flex items-center gap-2 px-3 py-2 rounded-full border border-[#e8e8ed] bg-white text-[0.8125rem] font-medium text-[#1d1d1f] hover:border-[#d2d2d7] hover:bg-[#F5F5F7] transition-colors"
            >
              <Layers className="w-3.5 h-3.5 text-[#ED1C24]" />
              Articles
-             <span className="text-[10px] font-bold text-slate-400 tabular-nums">
+             <span className="text-[0.75rem] font-medium text-[#aeaeb2] tabular-nums">
                {selectedArticleIds.length}/10
              </span>
            </button>
@@ -226,38 +249,38 @@ export function StoryArcScreen({ persona, articles, onBack }: StoryArcScreenProp
              type="button"
              onClick={() => fetchStoryArc()}
              disabled={loading || selectedArticleIds.length === 0}
-             className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-[11px] font-semibold transition-all ${
+             className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded-full text-[0.8125rem] font-medium transition-all ${
                selectedArticleIds.length > 0 && !loading
-                 ? 'bg-[#ED1C24] text-white shadow-sm hover:bg-[#d41920]'
-                 : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                 ? 'bg-[#ED1C24] text-white hover:bg-[#c8151b]'
+                 : 'bg-[#e8e8ed] text-[#aeaeb2] cursor-not-allowed'
              }`}
            >
              {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
              Generate arc
            </button>
-           <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
+           <div className="flex items-center bg-[#F5F5F7] p-1 rounded-full border border-[#e8e8ed]">
              <button
                type="button"
                onClick={() => setViewMode('2d')}
-               className={`px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide rounded-md transition-all ${viewMode === '2d' ? 'bg-white text-[#ED1C24] shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+               className={`px-3 py-1.5 text-[0.6875rem] font-medium uppercase tracking-wide rounded-full transition-all ${viewMode === '2d' ? 'bg-white text-[#ED1C24] shadow-sm' : 'text-[#6e6e73] hover:text-[#1d1d1f]'}`}
              >
                2D
              </button>
              <button
                type="button"
                onClick={() => setViewMode('3d')}
-               className={`px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide rounded-md transition-all ${viewMode === '3d' ? 'bg-white text-[#ED1C24] shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+               className={`px-3 py-1.5 text-[0.6875rem] font-medium uppercase tracking-wide rounded-full transition-all ${viewMode === '3d' ? 'bg-white text-[#ED1C24] shadow-sm' : 'text-[#6e6e73] hover:text-[#1d1d1f]'}`}
              >
                3D
              </button>
            </div>
            
-           <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
+           <div className="flex items-center gap-3 pl-3 border-l border-[#e8e8ed]">
               <div className="text-right hidden sm:block">
-                <p className="text-[10px] font-black text-[#ED1C24] uppercase tracking-tighter">{persona.name}</p>
-                <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Nexus Profile Active</p>
+                <p className="text-[0.6875rem] font-semibold text-[#ED1C24]">{persona.name}</p>
+                <p className="section-eyebrow">Active Profile</p>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center border border-slate-700 shadow-md">
+              <div className="w-10 h-10 rounded-full bg-[#1d1d1f] text-white flex items-center justify-center border border-[#e8e8ed]">
                  <Brain className="w-5 h-5 text-[#ED1C24]" />
               </div>
             </div>
@@ -297,22 +320,29 @@ export function StoryArcScreen({ persona, articles, onBack }: StoryArcScreenProp
 
         {/* Error State */}
         {error && (
-          <div className="absolute top-10 left-1/2 -translate-x-1/2 z-40 w-full max-w-lg">
-            <div className="bg-white border-2 border-red-500 shadow-2xl p-5 rounded-2xl flex items-center gap-5 text-red-600">
-               <div className="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                 <AlertTriangle className="w-7 h-7" />
+          <div className="absolute top-10 left-1/2 -translate-x-1/2 z-40 w-full max-w-lg px-4">
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="liquid-glass p-5 rounded-2xl flex items-start gap-4"
+            >
+               <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                 <AlertTriangle className="w-5 h-5 text-red-600" />
                </div>
-               <div className="flex-1">
-                 <p className="text-sm font-black uppercase tracking-tight">System Notification</p>
-                 <p className="text-xs font-medium text-slate-500 mt-0.5">{error}</p>
+               <div className="flex-1 min-w-0">
+                 <p className="text-[0.9375rem] font-semibold text-[#1d1d1f] mb-1">Request Failed</p>
+                 <p className="text-[0.8125rem] text-[#6e6e73] leading-relaxed">{error}</p>
                </div>
                <button 
-                 onClick={() => fetchStoryArc()} 
-                 className="px-6 py-2 bg-[#ED1C24] text-white text-[10px] font-black uppercase rounded-xl hover:scale-105 transition-transform"
+                 onClick={() => {
+                   setError(null);
+                   if (selectedArticleIds.length > 0) fetchStoryArc();
+                 }}
+                 className="inline-flex items-center justify-center px-4 py-1.5 rounded-full bg-[#ED1C24] text-white text-[0.8125rem] font-medium hover:bg-[#c8151b] transition-colors flex-shrink-0"
                >
                  Retry
                </button>
-            </div>
+            </motion.div>
           </div>
         )}
 
@@ -340,15 +370,30 @@ export function StoryArcScreen({ persona, articles, onBack }: StoryArcScreenProp
                 )}
               </div>
             ) : !loading && (
-              <div className="h-full flex flex-col items-center justify-center text-slate-200">
-                <Globe className="w-32 h-32 mb-6" />
-                <p className="text-2xl font-black uppercase tracking-tighter text-slate-400">Initialize Knowledge Exploration</p>
-                <button 
-                   onClick={() => fetchStoryArc()}
-                   className="mt-6 px-10 py-3 bg-white border border-slate-200 text-slate-900 font-black uppercase rounded-2xl shadow-sm hover:shadow-md transition-all"
-                >
-                   Start Global extraction
-                </button>
+              <div className="h-full flex flex-col items-center justify-center px-8">
+                <div className="max-w-md text-center">
+                  <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-[#F5F5F7] flex items-center justify-center">
+                    <Globe className="w-12 h-12 text-[#6e6e73]" />
+                  </div>
+                  <h3 className="font-serif apple-headline text-[clamp(1.5rem,3vw,2rem)] text-[#1d1d1f] mb-3">
+                    Story Arc Tracker
+                  </h3>
+                  <p className="text-[0.9375rem] text-[#6e6e73] leading-relaxed mb-8">
+                    Select articles from the list to visualize connections and narrative threads. Click "Articles" button to begin.
+                  </p>
+                  <div className="flex items-center justify-center gap-3">
+                    <button 
+                      onClick={() => setArticlesDialogOpen(true)}
+                      className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-full bg-[#ED1C24] text-white text-[0.9375rem] font-medium tracking-[-0.01em] hover:bg-[#c8151b] transition-colors duration-200"
+                    >
+                      <Layers className="w-4 h-4" />
+                      Select Articles
+                    </button>
+                  </div>
+                  <p className="section-eyebrow mt-6">
+                    {selectedArticleIds.length > 0 ? `${selectedArticleIds.length} article${selectedArticleIds.length > 1 ? 's' : ''} selected` : 'No articles selected'}
+                  </p>
+                </div>
               </div>
             )}
 

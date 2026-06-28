@@ -22,6 +22,8 @@ load_dotenv(override=True)
 sys.path.insert(0, str(Path(__file__).parent))
 
 from ingestion.data_collector import DataCollector, ET_RSS_FEEDS
+from ingestion.scraper import fetch_articles
+from ingestion.preprocessor import preprocess_batch, reset_dedup_cache
 from ingestion.et_nexus_ingestion import ETNexusKnowledgeBase, get_knowledge_base
 from agents.pipeline import AgenticPipeline
 from agents.director_agent import DirectorAgent
@@ -35,9 +37,30 @@ from ingestion.chunker import ArticleChunker
 sys.path.insert(0, str(Path(__file__).parent.parent))
 # Provide chatbot subdirectories to sys.path with unique names to avoid conflicts with backend modules
 sys.path.insert(0, str(Path(__file__).parent.parent / "chatbot"))
-from chatbot.cb_engine.chat_engine import ChatEngine
-from chatbot.cb_api.schemas import ChatRequest, ChatResponse, ChatHistory
-from chatbot.cb_ingestion.qa_ingest import QAVectorStore
+try:
+    from chatbot.cb_engine.chat_engine import ChatEngine
+    from chatbot.cb_api.schemas import ChatRequest, ChatResponse, ChatHistory
+    from chatbot.cb_ingestion.qa_ingest import QAVectorStore
+    CHATBOT_AVAILABLE = True
+except ImportError:
+    CHATBOT_AVAILABLE = False
+    print("⚠️ Chatbot module not found. Chat features will be disabled.")
+    from pydantic import BaseModel
+    class ChatRequest(BaseModel):
+        user_message: str
+        session_id: str
+        user_profile: dict = None
+        article_text: str = None
+
+    class ChatResponse(BaseModel):
+        response: str
+
+    class ChatHistory(BaseModel):
+        session_id: str
+        messages: list = []
+        created_at: datetime = None
+        last_updated: datetime = None
+
 
 # Story Arc Tracker
 from api.story_arc import router as story_arc_router
@@ -86,7 +109,7 @@ async def lifespan(app: FastAPI):
     """Initialize resources on startup, cleanup on shutdown."""
     global knowledge_base, director_agent, voice_engine, visual_engine, chat_engine
 
-    print("\n🚀 ET Nexus Backend starting up...")
+    print("\n🚀 E-newspaper Backend starting up...")
     
     # Initialize the unified Knowledge Base (initializes VectorStore, Chunker, etc. internally)
     knowledge_base = get_knowledge_base()
@@ -98,29 +121,38 @@ async def lifespan(app: FastAPI):
     visual_engine = VisualEngine()
     
     # Initialize Chatbot Engine with shared Qdrant client to avoid locking
-    print("🤖 Initializing Chatbot Engine (Shared Mode)...")
-    qa_store = QAVectorStore(client=knowledge_base.vector_store.client)
-    chat_engine = ChatEngine(vector_store=qa_store)
+    if CHATBOT_AVAILABLE:
+        print("🤖 Initializing Chatbot Engine (Shared Mode)...")
+        qa_store = QAVectorStore(client=knowledge_base.vector_store.client)
+        from chatbot.cb_engine.retriever import QARetriever
+        qa_retriever = QARetriever(vector_store=qa_store)
+        chat_engine = ChatEngine(retriever=qa_retriever)
+    else:
+        print("⚠️ Skipping Chatbot Engine initialization (module not found).")
+
 
     # Check if we already have data
     info = knowledge_base.get_collection_info()
     points = info.get("points_count", 0)
     if points > 0:
         print(f"📊 Vector store ready with {points} chunks")
+        print("💡 Articles already loaded - backend ready for requests")
     else:
-        print("📭 Vector store is empty. Use POST /ingest to populate.")
+        print("📭 Vector store is empty.")
+        print("💡 Articles will be loaded on first user request (non-blocking)")
+        # Don't auto-ingest on startup - let it happen in background on first request
 
-    print("✅ ET Nexus Backend ready!\n")
+    print("✅ E-newspaper Backend ready!\n")
     yield
 
     # Cleanup
-    print("👋 ET Nexus Backend shutting down...")
+    print("👋 E-newspaper Backend shutting down...")
 
 
 # ─── FastAPI App ────────────────────────────────────────────────
 
 app = FastAPI(
-    title="ET Nexus API",
+    title="E-newspaper API",
     description="AI-Native News Experience Engine — Personalized, Agentic, Generative UI",
     version="0.1.0",
     lifespan=lifespan,
@@ -150,7 +182,7 @@ async def health_check():
     info = knowledge_base.get_collection_info() if knowledge_base else {}
     return {
         "status": "healthy",
-        "service": "ET Nexus API",
+        "service": "E-newspaper API",
         "version": "0.1.0",
         "vector_store": info,
         "chatbot": "operational" if chat_engine else "initializing"
@@ -371,51 +403,102 @@ async def get_demo_personas():
 # ─── Run ────────────────────────────────────────────────────────────
 
 @app.post("/ingest/live")
-async def ingest_live_articles():
+async def ingest_live_articles(background_tasks: BackgroundTasks, quick: bool = False):
     """
-    Ingest articles from live ET RSS feeds using the DataCollector.
-    Uses the server's existing vector_store to avoid Qdrant lock conflicts.
+    Ingest articles from live RSS feeds.
+    
+    Args:
+        quick: If True, fetch only 5 articles per category for fast initial load
+               If False, fetch 50 articles per category (comprehensive)
     """
+    limit = 5 if quick else 50
+    
     try:
+        print("\n" + "=" * 70)
+        print(f"🔴 LIVE INGESTION STARTED ({'QUICK' if quick else 'FULL'} MODE)")
+        print("=" * 70)
+        
         collector = DataCollector()
-        # Fetching 20 articles per category as requested for a 'normal view' robust feed.
-        articles_list = await collector.collect_from_rss(limit_per_feed=20)
+        print(f"📡 Fetching {limit} articles per category from RSS feeds...")
+        articles_list = await collector.collect_from_rss(limit_per_feed=limit)
         
         if not articles_list:
+            print("⚠️ No articles fetched from RSS!")
             return {"status": "no_data", "articles_collected": 0, "chunks_stored": 0}
         
+        print(f"✅ Fetched {len(articles_list)} articles from RSS")
+        print(f"   Sample: {articles_list[0].title[:60]}... ({articles_list[0].date})")
+        
         # Preprocess
+        print("🛠️  Preprocessing articles...")
         processed = preprocess_batch(articles_list)
         
         # Chunk
+        print("✂️  Chunking articles...")
         chunks = knowledge_base.chunker.chunk_batch(processed)
         
-        # Store using the existing vector_store (no new Qdrant connection)
+        # Store
+        print(f"💾 Storing {len(chunks)} chunks in vector database...")
         stored_count = knowledge_base.vector_store.ingest_chunks(chunks)
+        
+        print("\n" + "=" * 70)
+        print(f"✅ LIVE INGESTION COMPLETE")
+        print(f"   Articles: {len(articles_list)}")
+        print(f"   Chunks: {stored_count}")
+        print("=" * 70 + "\n")
         
         return {
             "status": "success",
             "articles_collected": len(articles_list),
             "articles_processed": len(processed),
             "chunks_stored": stored_count,
+            "mode": "quick" if quick else "full"
         }
     except Exception as e:
         import traceback
+        print("\n" + "=" * 70)
+        print("❌ LIVE INGESTION FAILED")
+        print("=" * 70)
         traceback.print_exc()
+        print("=" * 70 + "\n")
         raise HTTPException(status_code=500, detail=f"Live ingestion failed: {str(e)}")
 
 
+@app.delete("/articles/clear")
+async def clear_articles():
+    """
+    Clear all articles from the vector store.
+    Useful before ingesting fresh articles.
+    """
+    try:
+        print("\n🗑️  Clearing vector store...")
+        # This will recreate the collection, effectively clearing it
+        knowledge_base.vector_store.client.delete_collection("et_articles")
+        knowledge_base.vector_store.client.create_collection(
+            collection_name="et_articles",
+            vectors_config={
+                "size": 384,
+                "distance": "Cosine"
+            }
+        )
+        print("✅ Vector store cleared\n")
+        return {"status": "success", "message": "All articles cleared"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Clear failed: {str(e)}")
+
+
 @app.get("/articles")
-def read_articles(category: str = None):
+def read_articles(category: str = None, limit: int = 50):
     """
     Returns unique articles (deduplicated by title, sorted by date descending).
-    Supports optional category filtering. Falls back to demo feed if store is empty.
+    Supports optional category filtering and limit. Falls back to demo feed if store is empty.
+    Default limit is 50 for optimal frontend performance.
     """
     # Try to get real articles from vector store
     if knowledge_base:
         try:
             # Use tag_filter to support live category clicks from frontend
-            articles = knowledge_base.vector_store.get_latest_articles(limit=40, tag_filter=category)
+            articles = knowledge_base.vector_store.get_latest_articles(limit=limit, tag_filter=category)
             if articles:
                 return articles
         except Exception as e:

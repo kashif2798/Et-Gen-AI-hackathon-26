@@ -24,7 +24,7 @@ import {
 
 import type { AnalysisResponse, Article, Persona, UserProfile, VideoResponse } from "@/types";
 import { Skeleton, ArticleSkeleton, AnalysisSkeleton, StoryboardSkeleton } from "@/components/ui/Skeleton";
-import { analyzeNews, fetchArticles, ingestFallback, generateVideo, API_BASE } from "@/lib/api";
+import { analyzeNews, fetchArticles, ingestFallback, ingestLive, generateVideo, API_BASE } from "@/lib/api";
 import { prefetchVideoJobAssets } from "@/lib/videoPrefetch";
 import { Player } from "@remotion/player";
 import { ChatWidget } from "../components/ChatWidget";
@@ -58,7 +58,7 @@ function getFallbackThumbnailDataUrl(article: Article) {
 
   // Shorten text to fit the thumbnail while keeping it readable.
   const label = (tag || "News").slice(0, 18);
-  const headline = (title || "ET Nexus").replace(/\s+/g, " ").slice(0, 44).trim();
+  const headline = (title || "E-newspaper").replace(/\s+/g, " ").slice(0, 44).trim();
 
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="800" height="400" viewBox="0 0 800 400">
@@ -87,7 +87,7 @@ function getFallbackThumbnailDataUrl(article: Article) {
 
       <text x="56" y="344" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
             font-size="14" font-weight="700" fill="rgba(255,255,255,0.85)">
-        ET Nexus • Economic Times
+        E-newspaper
       </text>
     </svg>
   `;
@@ -157,34 +157,71 @@ export default function Home() {
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
 
-  // Load articles when reaching home screen
+  // Load articles when reaching home screen - OPTIMIZED
+  const hasLoadedRef = useRef(false);
+  
   useEffect(() => {
-    if (screen === "home") {
+    if (screen === "home" && !hasLoadedRef.current) {
+      hasLoadedRef.current = true;
+      
+      // Load articles immediately (50 limit for fast performance)
       loadArticles();
+      
+      // Only ingest if we have very few or no articles
+      const checkAndIngest = async () => {
+        // Wait a bit to let initial load complete
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        if (articles.length === 0 && !ingested && !isIngesting) {
+          console.log("📰 No articles found, starting quick ingestion...");
+          await handleIngest(true);
+        }
+      };
+      
+      checkAndIngest();
     }
-  }, [screen]);
+  }, [screen]); // Only depend on screen to prevent infinite loops
 
-  const loadArticles = async (category?: string) => {
+  const loadArticles = async (category?: string, limit: number = 50) => {
     setIsLoadingArticles(true);
+    
+    // Add timeout to prevent infinite loading
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    
     try {
       const catParam = category === "All" ? undefined : category;
-      const data = await fetchArticles(catParam);
+      const data = await fetchArticles(catParam, limit);
       setArticles(data);
-    } catch {
+      console.log(`✅ Loaded ${data.length} articles`);
+      clearTimeout(timeoutId);
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        console.error("❌ Article loading timed out");
+      } else {
+        console.error("❌ Failed to load articles:", error);
+      }
       setArticles([]);
     } finally {
       setIsLoadingArticles(false);
     }
   };
 
-  const handleIngest = async () => {
+  const handleIngest = async (quick = false) => {
     setIsIngesting(true);
     try {
-      await ingestFallback();
+      console.log(`🔴 Starting ${quick ? 'quick' : 'full'} ingestion...`);
+      const url = quick ? `${API_BASE}/ingest/live?quick=true` : `${API_BASE}/ingest/live`;
+      const res = await fetch(url, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to ingest live");
+      const result = await res.json();
+      console.log("✅ Ingestion complete:", result);
       setIngested(true);
       await loadArticles();
-    } catch {
-      // silent fail
+    } catch (error) {
+      console.error("❌ Ingestion failed:", error);
+      // Don't alert - just log, user can still see existing articles
     } finally {
       setIsIngesting(false);
     }
@@ -328,22 +365,18 @@ export default function Home() {
 function Logo({ className = "", light = false }: { className?: string; light?: boolean }) {
   return (
     <div className={`flex items-center gap-3 ${className}`}>
-      <div className="flex flex-col items-start -space-y-0.5">
-        <span className={`text-[8px] font-black tracking-[0.2em] uppercase leading-none ${light ? 'text-white/80' : 'text-[#101723]/60'}`}>The</span>
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 bg-[#ED1C24] flex items-center justify-center rounded-sm shadow-sm rotate-[-2deg]">
-             <span className="text-white font-serif font-black text-lg">E</span>
-          </div>
-          <div className="flex flex-col -space-y-1">
-            <h1 className={`text-xl font-serif font-black tracking-tight leading-none ${light ? 'text-white' : 'text-[#101723]'}`}>
-              ECONOMIC <span className="text-[#ED1C24]">TIMES</span>
-            </h1>
-            <span className={`text-[9px] font-bold tracking-[0.15em] ${light ? 'text-white/40' : 'text-gray-300'}`}>INTELLIGENCE UNIT</span>
-          </div>
-        </div>
+      <div className="flex items-center gap-2">
+        <h1 className={`text-2xl font-serif font-bold tracking-tight leading-none ${light ? 'text-white' : ''}`}
+            style={{
+              background: light ? 'white' : 'linear-gradient(135deg, #DC2626 0%, #000000 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              fontFamily: 'Georgia, serif'
+            }}>
+          E-newspaper
+        </h1>
       </div>
-      <div className={`h-8 w-px ${light ? 'bg-white/20' : 'bg-gray-100'} mx-1`} />
-      <span className={`text-lg font-sans font-extrabold tracking-tighter ${light ? 'text-white/90' : 'text-[#ED1C24]'}`}>NEXUS</span>
     </div>
   );
 }
@@ -356,43 +389,59 @@ function WelcomeScreen({ onStart }: { onStart: () => void }) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden bg-white"
+      animate={{ opacity: 1, transition: { duration: 0.5, ease: [0.25, 0.1, 0.25, 1] } }}
+      exit={{ opacity: 0, transition: { duration: 0.3 } }}
+      className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden bg-white px-5"
     >
-      {/* Background accent */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,_var(--et-beige)_0%,_transparent_40%)]" />
-      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#ED1C24]/3 rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2" />
+      {/* Clean gradient background */}
+      <div className="absolute inset-0 bg-gradient-to-b from-[#F5F5F7] via-white to-white pointer-events-none" />
 
       <motion.div
         initial={{ y: 30, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.2, duration: 0.6 }}
-        className="relative z-10 text-center max-w-2xl px-6"
+        transition={{ delay: 0.2, duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }}
+        className="relative z-10 text-center max-w-[692px] mx-auto"
       >
-        <Logo className="mb-12 justify-center scale-125 origin-center" />
+        <Logo className="mb-8 justify-center" />
 
-        <h2 className="text-4xl md:text-5xl font-serif font-black tracking-tight mb-6 leading-tight text-[#101723]">
-          Next-Gen News <br/> 
-          <span className="italic text-[#ED1C24]">Reimagined.</span>
-        </h2>
+        <p className="section-eyebrow mb-4">E-newspaper • AI-Native News</p>
 
-        <p className="text-lg text-gray-500 font-medium mb-10 max-w-md mx-auto leading-relaxed">
-          The precision of Economic Times meets the power of Agentic AI. Hyper-personalized intelligence for the modern visionary.
+        <h1 className="font-serif apple-headline mb-6 text-[#1d1d1f]"
+            style={{ 
+              fontSize: 'clamp(2.75rem, 6vw, 5.5rem)',
+              lineHeight: '1.05',
+              letterSpacing: '-0.03em'
+            }}>
+          Next-Gen News<br />
+          <em className="text-[#ED1C24] not-italic">Reimagined.</em>
+        </h1>
+
+        <p className="text-[1.1875rem] text-[#6e6e73] leading-relaxed max-w-[500px] mx-auto mb-10">
+          Personalized intelligence briefings powered by multi-agent AI.
         </p>
 
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={onStart}
-          className="px-10 py-4 bg-[#101723] text-white font-bold text-xs uppercase tracking-[0.2em] rounded-full hover:bg-black transition-all shadow-2xl shadow-black/20 flex items-center gap-3 mx-auto"
-        >
-          Begin Discovery
-          <ChevronRight className="w-4 h-4" />
-        </motion.button>
+        <div className="flex items-center justify-center gap-4 flex-wrap">
+          <motion.button
+            whileHover={{ y: -4 }}
+            whileTap={{ y: 0, scale: 0.99 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            onClick={onStart}
+            className="inline-flex items-center justify-center px-6 py-2.5 rounded-full bg-[#ED1C24] text-white text-[0.9375rem] font-medium tracking-[-0.01em] hover:bg-[#c8151b] transition-colors duration-200"
+          >
+            Begin Discovery
+          </motion.button>
+          <motion.button
+            whileHover={{ y: -4 }}
+            whileTap={{ y: 0, scale: 0.99 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            className="inline-flex items-center justify-center px-6 py-2.5 rounded-full border border-[#ED1C24] text-[#ED1C24] text-[0.9375rem] font-medium tracking-[-0.01em] hover:bg-[#ED1C24] hover:text-white transition-colors duration-200"
+          >
+            Learn more
+          </motion.button>
+        </div>
 
-        <div className="mt-16 pt-8 border-t border-gray-100">
-           <p className="text-[10px] text-gray-400 uppercase tracking-[0.3em] font-black">
+        <div className="mt-16 pt-8 border-t border-[#d2d2d7]">
+          <p className="section-eyebrow">
             Powered by Multi-Agent RAG • GenAI Hackathon 2026
           </p>
         </div>
@@ -409,22 +458,24 @@ function PersonaScreen({ onSelect }: { onSelect: (p: Persona) => void }) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="min-h-screen flex flex-col items-center justify-center px-6 py-12"
+      animate={{ opacity: 1, transition: { duration: 0.5, ease: [0.25, 0.1, 0.25, 1] } }}
+      exit={{ opacity: 0, transition: { duration: 0.3 } }}
+      className="min-h-screen flex flex-col items-center justify-center px-5 py-24 md:py-32 bg-[#F5F5F7]"
     >
       <motion.div
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.1 }}
+        transition={{ delay: 0.1, duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }}
         className="text-center mb-12"
       >
-        <div className="w-10 h-10 bg-[#FDE9E4] rounded-lg flex items-center justify-center mx-auto mb-4">
+        <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center mx-auto mb-4 border border-[#e8e8ed]">
           <User className="w-5 h-5 text-[#ED1C24]" />
         </div>
-        <h2 className="text-3xl md:text-4xl font-serif font-black mb-3">Choose Your Persona</h2>
-        <p className="text-gray-500 text-sm max-w-md mx-auto">
-          ET Nexus tailors every insight to your experience level and portfolio.
+        <h2 className="font-serif apple-headline text-[clamp(2rem,4vw,2.75rem)] mb-3 text-[#1d1d1f]">
+          Choose Your Persona
+        </h2>
+        <p className="text-[#6e6e73] text-[1.0625rem] max-w-md mx-auto leading-relaxed">
+          E-newspaper tailors every insight to your experience level and interests.
         </p>
       </motion.div>
 
@@ -436,27 +487,31 @@ function PersonaScreen({ onSelect }: { onSelect: (p: Persona) => void }) {
               key={p.user_id}
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.15 + i * 0.08 }}
+              transition={{ delay: 0.15 + i * 0.08, duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }}
+              whileHover={{ y: -4 }}
+              whileTap={{ y: 0, scale: 0.99 }}
               onClick={() => onSelect(p)}
-              className="group p-6 text-left bg-white border-2 border-gray-100 rounded-xl hover:border-[#ED1C24] hover:shadow-xl hover:shadow-[#ED1C24]/5 transition-all duration-300"
+              className="group p-6 text-left bg-white border border-[#e8e8ed] rounded-2xl hover:border-[#d2d2d7] hover:shadow-[0_4px_20px_rgba(0,0,0,0.08)] transition-all duration-300"
             >
               <div className="flex items-start gap-4">
                 <div className="text-3xl">{meta.icon}</div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-bold mb-0.5 text-[#ED1C24] uppercase tracking-tighter">{meta.role}</h3>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Profile Active</p>
-                  <p className="text-xs text-gray-500 leading-relaxed mb-3">{meta.desc}</p>
+                  <p className="section-eyebrow mb-1">{meta.role}</p>
+                  <span className="inline-block text-[0.6875rem] font-medium px-2 py-0.5 bg-[#F5F5F7] text-[#6e6e73] rounded-full mb-3">
+                    Profile Active
+                  </span>
+                  <p className="text-[0.8125rem] text-[#6e6e73] leading-relaxed mb-3">{meta.desc}</p>
                   {p.portfolio.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
                       {p.portfolio.map(tk => (
-                        <span key={tk} className="text-[10px] font-bold px-2 py-0.5 bg-gray-50 border border-gray-100 rounded text-gray-600">
+                        <span key={tk} className="text-[0.6875rem] font-medium px-2 py-0.5 bg-[#F5F5F7] border border-[#e8e8ed] rounded text-[#6e6e73]">
                           {tk}
                         </span>
                       ))}
                     </div>
                   )}
                 </div>
-                <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-[#ED1C24] transition-colors mt-1" />
+                <ChevronRight className="w-5 h-5 text-[#aeaeb2] group-hover:text-[#ED1C24] transition-colors mt-1" />
               </div>
             </motion.button>
           );
@@ -504,48 +559,43 @@ function HomeScreen({
     "Wealth", "Industry", "Environment", "International", "Opinion", "Mutual Funds"
   ];
 
-  // Refetch when category changes for 'Live' experience
-  useEffect(() => {
-    onRefresh(activeCategory);
-  }, [activeCategory]);
-
+  // Client-side filtering - no need to refetch from server for categories
   const filteredArticles = useMemo(() => {
     if (activeCategory === "All") return articles;
     return articles.filter(a => (a.tags ?? []).includes(activeCategory));
   }, [articles, activeCategory]);
 
 
-
   return (
     <motion.div
       initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="min-h-screen bg-[#FAFAFA]"
+      animate={{ opacity: 1, transition: { duration: 0.5, ease: [0.25, 0.1, 0.25, 1] } }}
+      exit={{ opacity: 0, transition: { duration: 0.3 } }}
+      className="min-h-screen bg-white"
     >
       {/* ── Header ── */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl backdrop-saturate-150 border-b border-[#d2d2d7]/60">
+        <div className="apple-container h-[52px] flex items-center justify-between">
           <Logo />
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
             <button
               onClick={onOpenVideoStudio}
-              className="flex items-center gap-2 px-4 py-2 text-[11px] font-bold uppercase tracking-wider bg-[#101723] text-white rounded-lg hover:bg-black transition-colors shadow-lg shadow-navy-900/10"
+              className="flex items-center gap-2 px-4 py-2 text-[0.8125rem] font-normal text-[#1d1d1f] hover:text-[#ED1C24] transition-colors"
             >
               <Video className="w-4 h-4" />
               <span>Video Studio</span>
             </button>
             <button
                onClick={() => onOpenStoryArc()}
-               className="flex items-center gap-2 px-4 py-2 text-[11px] font-bold uppercase tracking-wider bg-white border border-[#ED1C24]/20 text-[#ED1C24] rounded-lg hover:bg-[#FDE9E4] transition-colors shadow-sm"
+               className="flex items-center gap-2 px-4 py-2 text-[0.8125rem] font-normal text-[#1d1d1f] hover:text-[#ED1C24] transition-colors"
              >
                <Brain className="w-4 h-4" />
                <span>Story Arc</span>
              </button>
             <button
               onClick={() => onRefresh(activeCategory)}
-              className="p-2 text-gray-400 hover:text-[#ED1C24] transition-colors rounded-lg hover:bg-gray-50"
+              className="p-2 text-[#6e6e73] hover:text-[#ED1C24] transition-colors rounded-lg"
               title="Refresh articles"
             >
               <RefreshCw className="w-4 h-4" />
@@ -553,66 +603,72 @@ function HomeScreen({
             <button
               onClick={onIngest}
               disabled={isIngesting}
-              className="px-4 py-2 text-[11px] font-bold uppercase tracking-wider border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              className="px-4 py-1.5 text-[0.8125rem] font-normal border border-[#e8e8ed] rounded-full hover:bg-[#F5F5F7] transition-colors disabled:opacity-50"
             >
               {isIngesting ? "Loading..." : ingested ? "✓ Data Ready" : "Load Data"}
             </button>
             <button
               onClick={onChangePersona}
-              className="flex items-center gap-2 px-3 py-2 bg-[#FDE9E4] border border-[#ED1C24]/10 rounded-lg hover:border-[#ED1C24]/30 transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 bg-[#F5F5F7] border border-[#e8e8ed] rounded-full hover:border-[#d2d2d7] transition-colors"
             >
               <span className="text-base">{PERSONA_META[persona.persona]?.icon || "👤"}</span>
-              <span className="text-xs font-black text-[#ED1C24] uppercase tracking-tighter">{persona.name}</span>
+              <span className="text-[0.8125rem] font-medium text-[#1d1d1f]">{persona.name}</span>
             </button>
           </div>
         </div>
       </header>
 
       {/* ── Content ── */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-        <div className="flex items-center justify-between mb-8">
+      <main className="apple-container py-16 md:py-24">
+        <div className="flex items-center justify-between mb-12">
           <div>
-            <h2 className="text-2xl font-serif font-black">Latest News</h2>
-            <p className="text-sm text-gray-500 mt-1">
+            <h2 className="font-serif apple-headline text-[clamp(1.5rem,3vw,2rem)] text-[#1d1d1f]">Latest News</h2>
+            <p className="text-[0.9375rem] text-[#6e6e73] mt-2 leading-relaxed">
               Choose a category, then tap any story for AI-powered analysis tailored to your profile
             </p>
           </div>
           <div className="text-right">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block">
-              {filteredArticles.length} shown
+            <span className="text-[0.8125rem] font-medium text-[#6e6e73] block">
+              {filteredArticles.length} articles
             </span>
-            <span className="text-[11px] text-gray-400">
-              Category: <span className="font-bold text-gray-600">{activeCategory}</span>
+            <span className="section-eyebrow">
+              {activeCategory === "All" ? "All Categories" : activeCategory}
             </span>
           </div>
         </div>
 
         {isLoading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 pt-2">
-            {[1, 2, 3, 4, 5, 6].map((i) => (
-              <ArticleSkeleton key={i} />
-            ))}
+          <div className="space-y-8">
+            <div className="text-center py-8">
+              <div className="inline-flex items-center gap-3 px-6 py-3 bg-[#F5F5F7] rounded-2xl">
+                <Loader2 className="w-5 h-5 text-[#ED1C24] animate-spin" />
+                <span className="text-[0.9375rem] text-[#6e6e73] font-medium">Loading articles...</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <ArticleSkeleton key={i} />
+              ))}
+            </div>
           </div>
         ) : articles.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-gray-200 rounded-xl">
-            <BookOpen className="w-10 h-10 text-gray-300 mb-4" />
-            <p className="text-gray-500 font-medium mb-2">No articles yet</p>
-            <p className="text-sm text-gray-400 mb-6">Load the fallback dataset to get started</p>
+          <div className="flex flex-col items-center justify-center py-24 border-2 border-dashed border-[#e8e8ed] rounded-2xl bg-[#F5F5F7]">
+            <BookOpen className="w-10 h-10 text-[#aeaeb2] mb-4" />
+            <p className="text-[#6e6e73] font-medium mb-2">No articles yet</p>
+            <p className="text-[0.8125rem] text-[#aeaeb2] mb-6">Load live articles to get started</p>
             <button
               onClick={onIngest}
               disabled={isIngesting}
-              className="px-6 py-2 bg-[#ED1C24] text-white text-sm font-bold rounded-lg hover:bg-[#d4171e] transition-colors disabled:opacity-50"
+              className="inline-flex items-center justify-center px-6 py-2.5 rounded-full bg-[#ED1C24] text-white text-[0.9375rem] font-medium tracking-[-0.01em] hover:bg-[#c8151b] transition-colors duration-200 disabled:opacity-50"
             >
               {isIngesting ? "Loading..." : "Load Articles"}
             </button>
           </div>
         ) : (
-          <div className="space-y-5">
+          <div className="space-y-8">
             {/* Category chips */}
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mr-1">
-                Browse by topic
-              </span>
+              <span className="section-eyebrow mr-2">Browse by topic</span>
               {categories.map(cat => {
                 const selected = cat === activeCategory;
                 return (
@@ -621,10 +677,10 @@ function HomeScreen({
                     type="button"
                     onClick={() => setActiveCategory(cat)}
                     className={
-                      "px-3 py-1.5 rounded-full text-[11px] font-bold border transition-colors " +
+                      "px-4 py-1.5 rounded-full text-[0.8125rem] font-medium transition-colors duration-200 " +
                       (selected
-                        ? "bg-[#ED1C24] text-white border-[#ED1C24]"
-                        : "bg-white text-gray-600 border-gray-200 hover:border-[#ED1C24]/40 hover:text-[#ED1C24]")
+                        ? "bg-[#1d1d1f] text-white"
+                        : "bg-[#F5F5F7] text-[#1d1d1f] hover:bg-[#e8e8ed]")
                     }
                     aria-pressed={selected}
                     title={cat === "All" ? "Show all news" : `Show ${cat} news`}
@@ -636,20 +692,17 @@ function HomeScreen({
             </div>
 
             {/* Feed header */}
-            <div className="flex items-center justify-between border-b border-gray-100 pb-4">
-              <div className="flex items-center gap-2">
-                <div className="w-1.5 h-6 bg-[#ED1C24] rounded-full" />
-                <span className="text-lg font-black font-serif text-[#101723]">
-                  {activeCategory === "All" ? "Top Intelligence Briefs" : `${activeCategory} Special Reports`}
-                </span>
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-2 px-2 py-0.5 bg-gray-50 rounded">
-                  Personalized for {persona.name}
-                </span>
-              </div>
+            <div className="flex items-center gap-3 pb-6 border-b border-[#e8e8ed]">
+              <h3 className="font-serif apple-headline-sm text-[1.25rem] text-[#1d1d1f]">
+                {activeCategory === "All" ? "Top Intelligence Briefs" : `${activeCategory} Special Reports`}
+              </h3>
+              <span className="section-eyebrow px-2 py-0.5 bg-[#F5F5F7] rounded-full">
+                For {persona.name}
+              </span>
             </div>
 
             {/* Articles Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
               {filteredArticles.map((article, i) => (
                 <ArticleCard
                   key={article.id + i}
@@ -659,9 +712,9 @@ function HomeScreen({
                 />
               ))}
               {filteredArticles.length === 0 && (
-                <div className="w-full border-2 border-dashed border-gray-200 rounded-xl p-10 text-center bg-white">
-                  <p className="text-gray-500 font-medium mb-1">No stories in this category yet</p>
-                  <p className="text-sm text-gray-400">Try a different topic or load fresh data.</p>
+                <div className="col-span-full border-2 border-dashed border-[#e8e8ed] rounded-2xl p-10 text-center bg-[#F5F5F7]">
+                  <p className="text-[#6e6e73] font-medium mb-1">No stories in this category yet</p>
+                  <p className="text-[0.8125rem] text-[#aeaeb2]">Try a different topic or load fresh data.</p>
                 </div>
               )}
             </div>
@@ -682,49 +735,39 @@ function ArticleCard({ article, index, onClick }: { article: Article; index: num
 
   return (
     <motion.div
-      initial={{ y: 20, opacity: 0 }}
+      initial={{ y: 30, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      transition={{ delay: index * 0.05 }}
+      transition={{ delay: index * 0.08, duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }}
+      whileHover={{ y: -4 }}
+      whileTap={{ y: 0, scale: 0.99 }}
       onClick={onClick}
-      className="group bg-white rounded-xl border border-gray-100 overflow-hidden cursor-pointer hover:shadow-lg hover:shadow-black/5 hover:border-[#ED1C24]/20 transition-all duration-300"
+      className="group bg-white rounded-2xl border border-[#e8e8ed] overflow-hidden cursor-pointer hover:border-[#d2d2d7] hover:shadow-[0_4px_20px_rgba(0,0,0,0.08)] transition-all duration-300"
     >
       {/* Thumbnail */}
-      <div className="h-48 bg-gradient-to-br from-gray-100 to-gray-50 relative overflow-hidden">
+      <div className="overflow-hidden aspect-[16/10]">
         <img
           src={thumbnailUrl}
           alt={article.title}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           loading="lazy"
         />
-        {/* Tag overlay */}
-        {article.tags?.[0] && (
-          <div className="absolute top-3 left-3">
-            <span className="px-2 py-1 bg-[#ED1C24] text-white text-[10px] font-bold uppercase tracking-wider rounded">
-              {article.tags[0]}
-            </span>
-          </div>
-        )}
       </div>
 
       {/* Content */}
       <div className="p-6">
-        <h3 className="font-serif font-bold text-lg leading-tight mb-3 group-hover:text-[#ED1C24] transition-colors line-clamp-2">
+        {article.tags?.[0] && (
+          <p className="section-eyebrow mb-2">{article.tags[0]}</p>
+        )}
+        <h3 className="font-serif apple-headline-sm text-[1.125rem] mb-2 line-clamp-2 text-[#1d1d1f] group-hover:text-[#ED1C24] transition-colors">
           {article.title}
         </h3>
-        <p className="text-[13px] text-gray-500 font-medium leading-relaxed mb-5 line-clamp-3">
+        <p className="text-[0.8125rem] text-[#6e6e73] leading-relaxed line-clamp-2 mb-4">
           {article.summary}
         </p>
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-[11px] text-gray-400">
+          <div className="flex items-center gap-1.5 text-[0.75rem] text-[#aeaeb2]">
             <Calendar className="w-3 h-3" />
             <span>{article.date}</span>
-          </div>
-          <div className="flex gap-1.5">
-            {article.tags?.slice(1, 3).map(tag => (
-              <span key={tag} className="text-[9px] font-bold px-1.5 py-0.5 bg-gray-50 text-gray-500 rounded">
-                {tag}
-              </span>
-            ))}
           </div>
         </div>
       </div>
@@ -753,56 +796,65 @@ function ArticleScreen({ article, persona, analysis, isLoading, onBack, onGenera
   return (
     <motion.div
       initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      animate={{ opacity: 1, transition: { duration: 0.5, ease: [0.25, 0.1, 0.25, 1] } }}
+      exit={{ opacity: 0, transition: { duration: 0.3 } }}
       className="min-h-screen bg-white"
     >
-      <header className="bg-white/90 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-2 flex items-center justify-between">
+      {/* Header */}
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl backdrop-saturate-150 border-b border-[#d2d2d7]/60">
+        <div className="apple-container h-[52px] flex items-center justify-between">
           <button
             onClick={onBack}
-            className="group flex items-center gap-2 text-[#ED1C24] font-extrabold text-[10px] uppercase tracking-wider hover:text-black transition-colors"
+            className="flex items-center gap-2 text-[0.8125rem] font-normal text-[#1d1d1f] hover:text-[#ED1C24] transition-colors"
           >
-            <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-1 transition-transform" /> Back
+            <ArrowLeft className="w-4 h-4" />
+            <span>Back</span>
           </button>
-          <Logo className="scale-75 origin-center" />
-          <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 rounded-full border border-gray-100">
-            <span className="text-sm">{meta.icon}</span>
-            <span className="text-[10px] font-black text-[#ED1C24] uppercase tracking-tighter">{persona.name}</span>
+          <Logo />
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-[#F5F5F7] rounded-full border border-[#e8e8ed]">
+            <span className="text-base">{meta.icon}</span>
+            <span className="text-[0.8125rem] font-medium text-[#1d1d1f]">{persona.name}</span>
           </div>
         </div>
       </header>
 
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
-        {/* ── Article Header ── */}
-        <div className="mb-10">
+      <div className="apple-container py-16 md:py-24">
+        {/* Article Header */}
+        <div className="mb-16">
           {/* Tags */}
-          <div className="flex gap-2 mb-4">
-            {article.tags?.map(tag => (
-              <span key={tag} className="px-2.5 py-1 bg-[#FDE9E4] text-[#ED1C24] text-[10px] font-bold uppercase tracking-wider rounded">
-                {tag}
-              </span>
-            ))}
-          </div>
+          {article.tags && article.tags.length > 0 && (
+            <div className="flex gap-2 mb-4">
+              {article.tags.slice(0, 3).map(tag => (
+                <span key={tag} className="section-eyebrow px-2 py-1 bg-[#F5F5F7] rounded-full">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Title */}
-          <h1 className="text-3xl md:text-4xl font-serif font-black leading-tight mb-4">
+          <h1 className="font-serif apple-headline mb-6 text-[#1d1d1f]"
+              style={{
+                fontSize: 'clamp(1.75rem, 4vw, 3.25rem)',
+                lineHeight: '1.08',
+                letterSpacing: '-0.025em'
+              }}>
             {article.title}
           </h1>
 
           {/* Meta */}
-          <div className="flex items-center gap-4 text-sm text-gray-500 mb-6">
+          <div className="flex items-center gap-4 text-[0.8125rem] text-[#6e6e73] mb-8">
             <div className="flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5" />
               <span>{article.date}</span>
             </div>
             <span>•</span>
-            <span className="text-[#ED1C24] font-medium">Economic Times</span>
+            <span className="font-medium text-[#ED1C24]">E-newspaper</span>
           </div>
 
           {/* Banner Image */}
           {hasImage && (
-            <div className="w-full h-64 md:h-80 rounded-xl overflow-hidden mb-6 bg-gray-100">
+            <div className="w-full aspect-[21/9] rounded-2xl overflow-hidden mb-8 bg-[#F5F5F7]">
               <img
                 src={article.image_url!}
                 alt={article.title}
@@ -814,155 +866,123 @@ function ArticleScreen({ article, persona, analysis, isLoading, onBack, onGenera
 
           {/* Article Summary */}
           <div className="prose max-w-none">
-            <p className="text-lg md:text-xl leading-relaxed text-gray-700 font-medium 
-                        first-letter:text-6xl first-letter:font-serif first-letter:font-black 
-                        first-letter:float-left first-letter:mr-3 first-letter:text-[#101723] 
-                        first-letter:leading-[0.8] first-letter:mt-1
-                        drop-shadow-sm">
+            <p className="text-[1.0625rem] leading-[1.65] text-[#1d1d1f] font-normal">
               {article.summary}
             </p>
           </div>
         </div>
 
-        {/* ── Divider ── */}
-        <div className="border-t-2 border-[#ED1C24] pt-8 mb-8">
-          <div className="flex items-center gap-2 mb-2">
-            <Brain className="w-5 h-5 text-[#ED1C24]" />
-            <h2 className="text-xl font-serif font-black">AI Agent Analysis</h2>
+        {/* Divider */}
+        <div className="border-t border-[#e8e8ed] pt-16 mb-12">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 bg-[#F5F5F7] rounded-full flex items-center justify-center">
+              <Brain className="w-5 h-5 text-[#ED1C24]" />
+            </div>
+            <div>
+              <h2 className="font-serif apple-headline-sm text-[1.25rem] text-[#1d1d1f]">AI Agent Analysis</h2>
+              <p className="section-eyebrow">Personalized for {persona.name}</p>
+            </div>
           </div>
-          <p className="text-sm text-gray-500">
-            Multi-agent synthesis personalized for <strong className="text-[#ED1C24]">{persona.name}</strong>
-          </p>
         </div>
 
-        {/* ── AI Analysis Section ── */}
+        {/* AI Analysis Section */}
         {isLoading ? (
-          <div className="py-10">
+          <div className="py-16">
+            <div className="flex flex-col items-center gap-4 mb-12">
+              <Loader2 className="w-8 h-8 text-[#ED1C24] animate-spin" />
+              <p className="text-[0.9375rem] text-[#6e6e73]">Analyzing with multi-agent AI...</p>
+            </div>
             <AnalysisSkeleton />
           </div>
         ) : analysis ? (
-          <div className="space-y-6">
-            {/* 🎬 Video Briefing CTA */}
-            <div className="bg-gradient-to-r from-[#101723] to-[#1A2639] rounded-2xl p-6 mb-8 flex flex-col md:flex-row items-center justify-between gap-6 border border-white/10 shadow-2xl">
+          <div className="space-y-8">
+            {/* Video Generation CTA */}
+            <div className="liquid-glass p-8 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-6">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-[#ED1C24] rounded-2xl flex items-center justify-center shadow-lg shadow-red-500/20">
+                <div className="w-12 h-12 bg-[#ED1C24] rounded-2xl flex items-center justify-center">
                   <PlayCircle className="w-6 h-6 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-white font-serif font-black text-xl">Generate AI News Briefing</h3>
-                  <p className="text-gray-400 text-sm">Transform this analysis into a 60-second broadcast video</p>
+                  <h3 className="font-serif apple-headline-sm text-[1.125rem] text-[#1d1d1f] mb-1">
+                    Generate AI News Briefing
+                  </h3>
+                  <p className="text-[0.8125rem] text-[#6e6e73]">Transform this analysis into a 60-second broadcast video</p>
                 </div>
               </div>
-              <button
-                onClick={() => onGenerateVideo(article, analysis)}
-                className="w-full md:w-auto px-8 py-4 bg-[#ED1C24] text-white rounded-xl font-black uppercase tracking-widest hover:bg-[#C4121B] transition-all transform hover:scale-105 active:scale-95 shadow-xl shadow-red-500/20 flex items-center justify-center gap-3"
-              >
-                <Sparkles className="w-5 h-5" />
-                Create Briefing
-              </button>
-              <button
-                onClick={() => onViewStoryArc(article)}
-                className="w-full md:w-auto px-8 py-4 bg-white border-2 border-[#ED1C24] text-[#ED1C24] rounded-xl font-black uppercase tracking-widest hover:bg-[#FDE9E4] transition-all transform hover:scale-105 active:scale-95 shadow-lg flex items-center justify-center gap-3"
-              >
-                <Brain className="w-5 h-5" />
-                View Story Arc
-              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => onGenerateVideo(article, analysis)}
+                  className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-full bg-[#ED1C24] text-white text-[0.9375rem] font-medium tracking-[-0.01em] hover:bg-[#c8151b] transition-colors duration-200"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Create Briefing
+                </button>
+                <button
+                  onClick={() => onViewStoryArc(article)}
+                  className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-full border border-[#ED1C24] text-[#ED1C24] text-[0.9375rem] font-medium tracking-[-0.01em] hover:bg-[#ED1C24] hover:text-white transition-colors duration-200"
+                >
+                  <Brain className="w-4 h-4" />
+                  View Story Arc
+                </button>
+              </div>
             </div>
 
-            {/* Agent 1: AI Summarizer */}
-            <div className="bg-white rounded-2xl p-8 border border-gray-100 shadow-xl shadow-black/5 relative overflow-hidden group">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-[#ED1C24]/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:bg-[#ED1C24]/10 transition-colors" />
+            {/* Executive Summary */}
+            <div className="bg-[#F5F5F7] rounded-2xl p-8">
               <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-[#101723] rounded-xl flex items-center justify-center shadow-lg">
+                <div className="w-10 h-10 bg-[#1d1d1f] rounded-xl flex items-center justify-center">
                   <Sparkles className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-xs font-black uppercase tracking-[0.2em] text-[#101723]">Executive Briefing</h3>
-                  <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">AI Synthesis Engine • Confidence: {Math.round(analysis.confidence * 100)}%</p>
+                  <h3 className="font-serif apple-headline-sm text-[1.125rem] text-[#1d1d1f]">Executive Briefing</h3>
+                  <p className="section-eyebrow">AI Synthesis • Confidence: {Math.round(analysis.confidence * 100)}%</p>
                 </div>
               </div>
-              <h4 className="font-serif font-black text-2xl mb-4 leading-tight text-[#101723]">{analysis.headline}</h4>
-              <p className="text-[15px] leading-relaxed text-gray-600 whitespace-pre-line font-medium">{analysis.summary}</p>
+              <h4 className="font-serif apple-headline text-[clamp(1.25rem,3vw,1.75rem)] mb-4 text-[#1d1d1f]">
+                {analysis.headline}
+              </h4>
+              <p className="text-[1.0625rem] leading-[1.65] text-[#1d1d1f] whitespace-pre-line">
+                {analysis.summary}
+              </p>
             </div>
 
-            {/* Agent 2 & 3: Bull / Bear side by side */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Bull & Bear Analysis */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Bull Agent */}
-              <div className="bg-emerald-50/50 rounded-xl p-6 border border-emerald-100">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center">
+              <div className="bg-white rounded-2xl p-6 border border-[#e8e8ed]">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center">
                     <TrendingUp className="w-4 h-4 text-white" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-black uppercase tracking-wide text-emerald-800">Bull Agent</h3>
-                    <p className="text-[10px] text-emerald-500">Bullish perspective</p>
+                    <h3 className="text-[0.9375rem] font-semibold text-[#1d1d1f]">Bull Perspective</h3>
+                    <p className="section-eyebrow">Optimistic View</p>
                   </div>
                 </div>
-                <p className="text-sm leading-relaxed text-gray-700">{analysis.ui_metadata.bull}</p>
+                <p className="text-[0.9375rem] leading-relaxed text-[#6e6e73]">{analysis.ui_metadata.bull}</p>
               </div>
 
               {/* Bear Agent */}
-              <div className="bg-red-50/50 rounded-xl p-6 border border-red-100">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 bg-[#ED1C24] rounded-lg flex items-center justify-center">
+              <div className="bg-white rounded-2xl p-6 border border-[#e8e8ed]">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-8 h-8 bg-red-500 rounded-lg flex items-center justify-center">
                     <TrendingDown className="w-4 h-4 text-white" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-black uppercase tracking-wide text-[#ED1C24]">Bear Agent</h3>
-                    <p className="text-[10px] text-red-400">Bearish perspective</p>
+                    <h3 className="text-[0.9375rem] font-semibold text-[#1d1d1f]">Bear Perspective</h3>
+                    <p className="section-eyebrow">Cautious View</p>
                   </div>
                 </div>
-                <p className="text-sm leading-relaxed text-gray-700">{analysis.ui_metadata.bear}</p>
+                <p className="text-[0.9375rem] leading-relaxed text-[#6e6e73]">{analysis.ui_metadata.bear}</p>
               </div>
             </div>
-
-            {/* Agent 4: Context Engine — Sources */}
-            <div className="bg-white rounded-xl p-6 border-2 border-gray-100">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="w-8 h-8 bg-[#FDE9E4] rounded-lg flex items-center justify-center">
-                  <Shield className="w-4 h-4 text-[#ED1C24]" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black uppercase tracking-wide">Context Engine</h3>
-                  <p className="text-[10px] text-gray-400">Source-grounded facts — {analysis.sources.length} relevant chunks</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {analysis.sources.slice(0, 3).map((s, i) => (
-                  <div key={i} className="p-4 bg-gray-50 rounded-lg border border-gray-100 hover:border-[#ED1C24]/30 transition-colors">
-                    <p className="text-xs font-bold leading-snug mb-2">{s.title}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-gray-400">{s.date}</span>
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 bg-[#FDE9E4] text-[#ED1C24] rounded">{s.tags?.[0]}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Safety Disclaimer */}
-            {analysis.ui_metadata.disclaimer && (
-              <div className="p-4 bg-gray-50 border-l-4 border-gray-300 rounded-r-lg">
-                <p className="text-[10px] font-bold uppercase text-gray-500 mb-1">Disclaimer</p>
-                <p className="text-xs text-gray-500 italic">{analysis.ui_metadata.disclaimer}</p>
-              </div>
-            )}
           </div>
         ) : (
-          <div className="py-12 text-center border-2 border-dashed border-gray-200 rounded-xl">
-            <p className="text-gray-400 italic">Analysis could not be generated. Please ensure the backend is running with a valid GROQ_API_KEY.</p>
+          <div className="text-center py-16">
+            <p className="text-[#6e6e73]">No analysis available</p>
           </div>
         )}
       </div>
-
-      {/* ── Footer ── */}
-      <footer className="mt-16 border-t border-gray-200 py-8 bg-[#FAFAFA]">
-        <div className="max-w-5xl mx-auto px-6 text-center">
-          <p className="text-[11px] text-gray-400 uppercase tracking-widest font-medium">
-            ET Nexus • Multi-Agent RAG Intelligence • © {new Date().getFullYear()} Times Internet
-          </p>
-        </div>
-      </footer>
     </motion.div>
   );
 }
@@ -1025,29 +1045,37 @@ function VideoStudioScreen({
       exit={{ opacity: 0 }}
       className="min-h-screen bg-[#F5F5F7]"
     >
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
+      {/* Apple-style 52px glass header */}
+      <header className="h-[52px] bg-white/80 backdrop-blur-xl border-b border-black/5 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 h-full flex items-center justify-between">
+          <div className="flex items-center gap-3">
             <button
               onClick={onBack}
-              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              className="w-7 h-7 flex items-center justify-center hover:bg-black/5 rounded-full transition-all"
             >
-              <ArrowLeft className="w-5 h-5 text-gray-500" />
+              <ArrowLeft className="w-4 h-4 text-[#1d1d1f]" />
             </button>
-            <h1 className="text-xl font-serif font-black tracking-tight">AI Video Studio</h1>
+            <h1 className="text-[19px] font-semibold tracking-tight text-[#1d1d1f]">AI Video Studio</h1>
           </div>
-          <Logo className="h-6" />
+          <div className="text-xl font-serif" style={{
+            background: "linear-gradient(135deg, #ED1C24 0%, #1d1d1f 100%)",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+            backgroundClip: "text",
+          }}>
+            E-newspaper
+          </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+      <main className="max-w-7xl mx-auto px-6 py-16">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Left: Video Preview & Status */}
+          {/* Left: Video Preview */}
           <div className="lg:col-span-8">
-            <div className="aspect-video bg-black rounded-3xl shadow-2xl overflow-hidden relative">
+            <div className="aspect-video bg-[#1d1d1f] rounded-[18px] shadow-xl overflow-hidden relative">
               {isGenerating || isAnalyzing ? (
                 <div className="absolute inset-0 flex flex-col bg-white overflow-hidden z-20">
-                  <div className="p-8 border-b border-slate-100 flex items-center justify-between">
+                  <div className="p-8 border-b border-gray-100 flex items-center justify-between">
                     <div>
                       <Skeleton className="h-6 w-48 mb-2" />
                       <Skeleton className="h-4 w-32" />
@@ -1060,12 +1088,12 @@ function VideoStudioScreen({
                   <div className="flex-1 overflow-hidden">
                     <StoryboardSkeleton />
                   </div>
-                  <div className="p-8 bg-slate-50 border-t border-slate-100 flex items-center justify-center gap-6">
+                  <div className="p-8 bg-[#F5F5F7] border-t border-gray-100 flex items-center justify-center gap-6">
                     <div className="flex flex-col items-center gap-3">
-                      <div className="w-12 h-12 bg-[#ED1C24]/10 rounded-2xl flex items-center justify-center">
+                      <div className="w-12 h-12 bg-[#ED1C24]/10 rounded-full flex items-center justify-center">
                         <Loader2 className="w-6 h-6 text-[#ED1C24] animate-spin" />
                       </div>
-                      <p className="text-xs font-black text-slate-900 uppercase tracking-widest">
+                      <p className="text-[13px] font-medium text-[#1d1d1f]">
                         {isAnalyzing ? "Analyzing Intelligence..." : "Synthesizing Video Briefing..."}
                       </p>
                     </div>
@@ -1095,69 +1123,76 @@ function VideoStudioScreen({
               ) : (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-12">
                   <PlayCircle className="w-20 h-20 text-white/10 mb-6" />
-                  <h3 className="text-white font-serif text-2xl mb-4">Studio Ready</h3>
-                  <p className="text-gray-400 max-w-sm mx-auto">
-                    Select an article from the news desk and click 'Produce Briefing' to create sounds and visuals.
+                  <h3 className="text-white text-[28px] font-semibold tracking-tight mb-2">Studio Ready</h3>
+                  <p className="text-gray-400 text-[17px] max-w-sm mx-auto leading-relaxed">
+                    Select an article and click 'Produce Briefing' to create your AI-powered video.
                   </p>
                 </div>
               )}
             </div>
 
             {error && (
-              <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3 text-red-600">
-                <Zap className="w-5 h-5" />
-                <span className="text-sm font-bold">{error}</span>
-              </div>
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-6 p-4 bg-red-50 border border-red-200 rounded-[12px] flex items-center gap-3 text-red-600"
+              >
+                <Zap className="w-5 h-5 flex-shrink-0" />
+                <span className="text-[15px] font-medium">{error}</span>
+              </motion.div>
             )}
           </div>
 
-          {/* Right: Controls & Selection */}
+          {/* Right: Controls */}
           <div className="lg:col-span-4 space-y-6">
-            <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
-              <h3 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-6 flex items-center gap-2">
+            {/* Article Selection Card */}
+            <div className="liquid-glass rounded-[18px] p-6">
+              <h3 className="text-[13px] font-semibold text-[#86868b] mb-4 flex items-center gap-2">
                 <Play className="w-4 h-4" />
-                Article Desk
+                News Desk
               </h3>
-              <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+              <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
                 {articles.slice(0, 10).map((article) => (
                   <button
                     key={article.id}
                     onClick={() => { setSelectedArticle(article); onClearVideo(); }}
-                    className={`w-full text-left p-4 rounded-xl transition-all border ${
+                    className={`w-full text-left p-4 rounded-[12px] transition-all border ${
                       selectedArticle?.id === article.id
-                        ? "bg-[#101723] border-[#101723] text-white shadow-xl"
-                        : "bg-gray-50 border-transparent hover:border-gray-200 text-gray-700"
+                        ? "bg-[#1d1d1f] border-[#1d1d1f] text-white shadow-lg"
+                        : "bg-white border-black/5 hover:border-black/10 text-[#1d1d1f]"
                     }`}
                   >
-                    <p className="text-[10px] font-bold uppercase opacity-60 mb-1">{article.date}</p>
-                    <p className="font-serif font-bold text-sm leading-snug line-clamp-2">{article.title}</p>
+                    <p className="text-[11px] font-medium opacity-60 mb-1">{article.date}</p>
+                    <p className="font-semibold text-[15px] leading-tight line-clamp-2">{article.title}</p>
                   </button>
                 ))}
               </div>
             </div>
 
+            {/* Produce Button */}
             <button
               onClick={handleStartGeneration}
               disabled={!selectedArticle || isGenerating || isAnalyzing}
-              className="w-full py-6 bg-[#ED1C24] text-white rounded-2xl font-black uppercase tracking-[0.2em] shadow-2xl shadow-red-500/20 hover:bg-[#C4121B] transition-all transform active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full h-[56px] bg-[#0071e3] text-white rounded-full text-[17px] font-medium shadow-lg hover:bg-[#0077ED] transition-all active:scale-[0.98] flex items-center justify-center gap-3 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {isGenerating || isAnalyzing ? (
-                <Loader2 className="w-6 h-6 animate-spin" />
+                <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
                 <>
-                  <Sparkles className="w-6 h-6" />
+                  <Sparkles className="w-5 h-5" />
                   Produce Briefing
                 </>
               )}
             </button>
 
-            <div className="p-6 bg-blue-50 rounded-2xl border border-blue-100">
+            {/* Info Card */}
+            <div className="p-6 bg-[#F5F5F7] rounded-[18px] border border-black/5">
               <div className="flex items-center gap-2 mb-2">
-                <Shield className="w-4 h-4 text-blue-600" />
-                <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-800">Studio Guarantee</h4>
+                <Shield className="w-4 h-4 text-[#0071e3]" />
+                <h4 className="text-[13px] font-semibold text-[#1d1d1f]">Studio Intelligence</h4>
               </div>
-              <p className="text-[11px] text-blue-600 leading-relaxed font-medium">
-                Our AI Director automatically selects HD stock footage and synthesizes professional narration using the ET Nexus Intelligence voice bank.
+              <p className="text-[15px] text-[#6e6e73] leading-relaxed">
+                Our AI Director automatically selects HD stock footage and synthesizes professional narration using the E-newspaper Intelligence voice system.
               </p>
             </div>
           </div>

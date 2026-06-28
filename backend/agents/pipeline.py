@@ -38,22 +38,45 @@ class AgenticPipeline:
         user_profile: UserProfile,
         ticker_filter: Optional[str] = None
     ) -> dict:
+        start_time = time.time()
+        print(f"🚀 Starting analysis pipeline for: {query}")
+        
+        # Step 1: Build context (fast)
+        context_start = time.time()
         context = self.context_engine.build_context(
             query=query, 
             user_profile=user_profile,
             ticker_filter=ticker_filter
         )
+        print(f"✅ Context built in {time.time() - context_start:.2f}s")
         
-        # Synchronous execution with retry safety (to_thread used in original but simplified here)
-        bull_view = call_llm_with_retry(self.bull_agent.analyze, context)
-        bear_view = call_llm_with_retry(self.bear_agent.analyze, context)
+        # Step 2: Run Bull and Bear agents IN PARALLEL (major speedup)
+        parallel_start = time.time()
+        
+        async def run_bull():
+            return await asyncio.to_thread(
+                call_llm_with_retry, self.bull_agent.analyze, context
+            )
+        
+        async def run_bear():
+            return await asyncio.to_thread(
+                call_llm_with_retry, self.bear_agent.analyze, context
+            )
+        
+        # Execute both agents simultaneously
+        bull_view, bear_view = await asyncio.gather(run_bull(), run_bear())
+        print(f"✅ Bull & Bear analysis completed in {time.time() - parallel_start:.2f}s (parallel)")
 
-        synthesis = call_llm_with_retry(
+        # Step 3: Moderator synthesis (sequential - needs both views)
+        mod_start = time.time()
+        synthesis = await asyncio.to_thread(
+            call_llm_with_retry,
             self.moderator_agent.synthesize, 
             context, 
             bull_view, 
             bear_view
         )
+        print(f"✅ Moderator synthesis completed in {time.time() - mod_start:.2f}s")
         
         # --- Logic Handling ---
         
@@ -80,6 +103,9 @@ class AgenticPipeline:
             component = "BullishTrendChart"
         elif sentiment < -0.4:
             component = "BearishAlertChart"
+        
+        total_time = time.time() - start_time
+        print(f"🎉 Analysis pipeline completed in {total_time:.2f}s total")
             
         return {
             "summary": clean_summary,

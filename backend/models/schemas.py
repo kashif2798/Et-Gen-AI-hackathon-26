@@ -42,8 +42,8 @@ class ScrapedArticle(BaseModel):
     body: str = Field(..., min_length=50)
     image_url: Optional[str] = None
     url: str
-    tags: list[str] = Field(default_factory=lambda: ["ET News"])
-    source: str = Field(default="Economic Times")
+    tags: list[str] = Field(default_factory=lambda: ["News"])
+    source: str = Field(default="News Source")
 
 
 class ProcessedArticle(BaseModel):
@@ -55,7 +55,7 @@ class ProcessedArticle(BaseModel):
     image_url: Optional[str] = None
     url: str
     tags: list[str] = Field(default_factory=list)
-    source: str = Field(default="Economic Times")
+    source: str = Field(default="News Source")
 
 
 class ArticleChunk(BaseModel):

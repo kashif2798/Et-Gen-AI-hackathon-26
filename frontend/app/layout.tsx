@@ -1,17 +1,9 @@
 import type { Metadata } from "next";
-import { Roboto } from "next/font/google";
 import "./globals.css";
 
-const robotoCaptions = Roboto({
-  weight: ["400", "500", "700"],
-  subsets: ["latin"],
-  variable: "--font-caption-roboto",
-  display: "swap",
-});
-
 export const metadata: Metadata = {
-  title: "ET Nexus | AI-Native Financial News",
-  description: "Hyper-personalized, context-aware financial intelligence powered by multi-agent AI.",
+  title: "E-newspaper | AI-Native News Platform",
+  description: "Hyper-personalized, context-aware news intelligence powered by multi-agent AI.",
 };
 
 export default function RootLayout({
@@ -21,7 +13,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="light">
-      <body className={`antialiased min-h-screen ${robotoCaptions.variable}`}>
+      <body className="antialiased min-h-screen">
         {children}
       </body>
     </html>

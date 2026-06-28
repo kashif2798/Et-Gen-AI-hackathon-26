@@ -25,8 +25,12 @@ export async function fetchPersonas(): Promise<Persona[]> {
   return data.personas;
 }
 
-export async function fetchArticles(category?: string): Promise<Article[]> {
-  const url = category ? `${API_BASE}/articles?category=${encodeURIComponent(category)}` : `${API_BASE}/articles`;
+export async function fetchArticles(category?: string, limit: number = 50): Promise<Article[]> {
+  const params = new URLSearchParams();
+  if (category) params.append('category', category);
+  params.append('limit', limit.toString());
+  
+  const url = `${API_BASE}/articles?${params.toString()}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error("Failed to fetch articles");
   return res.json();

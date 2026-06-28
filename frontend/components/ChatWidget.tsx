@@ -22,7 +22,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ articleText, userName = 
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content: `Hello ${userName}! I'm the Nexus Assistant. I can help you understand this article or answer general questions about the platform and markets. How can I help today?`,
+      content: `Hello ${userName}! I'm the E-newspaper Assistant. I can help you understand this article or answer general questions about news and current events. How can I help today?`,
       timestamp: new Date(),
     },
   ]);
@@ -73,7 +73,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ articleText, userName = 
       const detail = error.response?.data?.detail || error.message || "Connection failed";
       const errorMessage: Message = {
         role: "assistant",
-        content: `Sorry, I encountered an error connecting to the Nexus Intelligence Unit: ${detail}`,
+        content: `Sorry, I encountered an error connecting to the E-newspaper Intelligence: ${detail}`,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
@@ -91,25 +91,25 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ articleText, userName = 
             initial={{ opacity: 0, scale: 0.9, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
-            className="mb-4 w-96 max-w-[calc(100vw-3rem)] h-[500px] bg-zinc-950/80 backdrop-blur-xl border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+            className="mb-4 w-96 max-w-[calc(100vw-3rem)] h-[500px] liquid-glass-dark overflow-hidden flex flex-col"
           >
             {/* Header */}
-            <div className="p-4 bg-gradient-to-r from-red-600/20 to-zinc-900 border-b border-zinc-800 flex items-center justify-between">
+            <div className="p-4 border-b border-white/10 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center">
+                <div className="w-8 h-8 rounded-full bg-[#ED1C24] flex items-center justify-center">
                   <Bot size={18} className="text-white" />
                 </div>
                 <div>
-                  <h3 className="text-white font-semibold text-sm">Nexus Assistant</h3>
+                  <h3 className="text-white font-medium text-[0.9375rem]">E-newspaper Assistant</h3>
                   <div className="flex items-center gap-1">
                     <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
-                    <span className="text-[10px] text-zinc-400">Intelligence Unit Online</span>
+                    <span className="text-[0.6875rem] text-white/60">Intelligence Unit Online</span>
                   </div>
                 </div>
               </div>
               <button 
                 onClick={() => setIsOpen(false)}
-                className="p-1 hover:bg-zinc-800 rounded-lg transition-colors text-zinc-400 hover:text-white"
+                className="p-1 hover:bg-white/10 rounded-lg transition-colors text-white/60 hover:text-white"
               >
                 <X size={20} />
               </button>
@@ -117,21 +117,21 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ articleText, userName = 
 
             {/* Context Notice (if article active) */}
             {articleText && (
-              <div className="px-4 py-2 bg-zinc-900/50 border-b border-zinc-800 flex items-center gap-2">
-                <Sparkles size={12} className="text-red-500" />
-                <span className="text-[10px] text-zinc-500 font-medium">Analyzing current article context...</span>
+              <div className="px-4 py-2 border-b border-white/10 flex items-center gap-2 bg-white/5">
+                <Sparkles size={12} className="text-[#ED1C24]" />
+                <span className="text-[0.6875rem] text-white/70 font-medium">Analyzing current article context...</span>
               </div>
             )}
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {messages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                   <div 
-                    className={`max-w-[80%] p-3 rounded-2xl text-sm ${
+                    className={`max-w-[80%] px-4 py-2.5 rounded-2xl text-[0.9375rem] leading-relaxed ${
                       msg.role === "user" 
-                        ? "bg-red-600 text-white rounded-tr-none" 
-                        : "bg-zinc-900 text-zinc-200 border border-zinc-800 rounded-tl-none"
+                        ? "bg-[#ED1C24] text-white rounded-tr-sm" 
+                        : "bg-white/10 text-white/90 rounded-tl-sm"
                     }`}
                   >
                     {msg.content}
@@ -140,9 +140,9 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ articleText, userName = 
               ))}
               {isLoading && (
                 <div className="flex justify-start">
-                  <div className="bg-zinc-900 border border-zinc-800 p-3 rounded-2xl rounded-tl-none w-2/3 space-y-2">
-                    <div className="h-3 bg-zinc-800 rounded-full animate-pulse w-full"></div>
-                    <div className="h-3 bg-zinc-800 rounded-full animate-pulse w-[60%]"></div>
+                  <div className="bg-white/10 px-4 py-2.5 rounded-2xl rounded-tl-sm w-2/3 space-y-2">
+                    <div className="h-3 bg-white/20 rounded-full animate-pulse w-full"></div>
+                    <div className="h-3 bg-white/20 rounded-full animate-pulse w-[60%]"></div>
                   </div>
                 </div>
               )}
@@ -150,7 +150,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ articleText, userName = 
             </div>
 
             {/* Footer */}
-            <div className="p-4 bg-zinc-950 border-t border-zinc-800">
+            <div className="p-4 border-t border-white/10 bg-white/5">
               <div className="relative flex items-center">
                 <input
                   type="text"
@@ -158,18 +158,18 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ articleText, userName = 
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
                   placeholder="Ask a question..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl py-3 pl-4 pr-12 text-sm text-zinc-200 focus:outline-none focus:border-red-600 transition-colors"
+                  className="w-full bg-white/10 border border-white/20 rounded-full py-2.5 pl-4 pr-12 text-[0.9375rem] text-white placeholder-white/40 focus:outline-none focus:border-[#ED1C24] transition-colors"
                 />
                 <button 
                   onClick={handleSendMessage}
                   disabled={isLoading}
-                  className="absolute right-2 p-2 bg-red-600 hover:bg-red-500 disabled:bg-zinc-800 transition-colors rounded-lg text-white"
+                  className="absolute right-1.5 p-2 bg-[#ED1C24] hover:bg-[#c8151b] disabled:bg-white/10 transition-colors rounded-full text-white"
                 >
                   <Send size={16} />
                 </button>
               </div>
-              <p className="mt-2 text-[10px] text-center text-zinc-600">
-                Nexus Assistant can make mistakes. Verify critical financial info.
+              <p className="mt-2 text-[0.6875rem] text-center text-white/40">
+                E-newspaper Assistant can make mistakes. Verify critical information.
               </p>
             </div>
           </motion.div>
@@ -178,11 +178,12 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ articleText, userName = 
 
       {/* Toggle Button (The Orb) */}
       <motion.button
-        whileHover={{ scale: 1.1 }}
-        whileTap={{ scale: 0.9 }}
+        whileHover={{ y: -4 }}
+        whileTap={{ y: 0, scale: 0.99 }}
+        transition={{ duration: 0.25, ease: "easeOut" }}
         onClick={() => setIsOpen(!isOpen)}
-        className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-all duration-300 ${
-          isOpen ? "bg-zinc-900 border border-zinc-800" : "bg-red-600 hover:bg-red-500"
+        className={`w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300 ${
+          isOpen ? "bg-[#1d1d1f] border border-white/10" : "bg-[#ED1C24] hover:bg-[#c8151b]"
         }`}
       >
         <AnimatePresence mode="wait">
@@ -193,7 +194,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ articleText, userName = 
               animate={{ rotate: 0, opacity: 1 }}
               exit={{ rotate: 90, opacity: 0 }}
             >
-              <X size={24} className="text-white" />
+              <X size={20} className="text-white" />
             </motion.div>
           ) : (
             <motion.div
@@ -203,8 +204,8 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ articleText, userName = 
               exit={{ scale: 0.5, opacity: 0 }}
               className="relative"
             >
-              <MessageCircle size={24} className="text-white" />
-              <div className="absolute -top-1 -right-1 w-3 h-3 bg-white rounded-full border-2 border-red-600 animate-pulse"></div>
+              <MessageCircle size={20} className="text-white" />
+              <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-white rounded-full border-2 border-[#ED1C24] animate-pulse"></div>
             </motion.div>
           )}
         </AnimatePresence>

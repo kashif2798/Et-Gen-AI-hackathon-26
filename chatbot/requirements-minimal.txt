@@ -1,0 +1,11 @@
+# Minimal requirements for mock mode testing
+# No external dependencies needed - chatbot works in mock mode!
+
+# Optional: If you want to install dependencies later with Python 3.8-3.12:
+# fastapi>=0.104.1
+# uvicorn>=0.24.0
+# pydantic>=2.5.0
+# python-dotenv>=1.0.0
+
+# Note: qdrant-client and sentence-transformers require Python 3.8-3.12
+# groq requires Python 3.8+

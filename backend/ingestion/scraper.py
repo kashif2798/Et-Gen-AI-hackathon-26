@@ -159,7 +159,7 @@ def scrape_rss_feed(rss_url: str, limit: int = 5) -> list[ScrapedArticle]:
                     image_url=image_url,
                     url=article_url,
                     tags=tags,
-                    source="Economic Times"
+                    source="News Source"
                 )
                 articles.append(article)
                 time.sleep(POLITE_DELAY)
@@ -232,7 +232,7 @@ def load_fallback_articles() -> list[ScrapedArticle]:
     articles = []
     for item in raw_articles:
         if "source" not in item:
-            item["source"] = "Economic Times"
+            item["source"] = "News Source"
         articles.append(ScrapedArticle(**item))
 
     print(f"   ✅ Loaded {len(articles)} fallback articles")
