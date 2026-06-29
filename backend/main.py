@@ -176,6 +176,26 @@ app.mount("/static/video", StaticFiles(directory=str(VIDEO_ASSETS_DIR)), name="v
 
 # ─── Endpoints ──────────────────────────────────────────────────
 
+@app.get("/")
+async def root():
+    """Root endpoint - redirects to docs."""
+    return {
+        "message": "E-newspaper API",
+        "version": "0.1.0",
+        "status": "operational",
+        "docs": "/docs",
+        "health": "/health",
+        "endpoints": {
+            "articles": "/articles",
+            "analyze": "/analyze",
+            "ingest": "/ingest/live",
+            "chat": "/chat",
+            "video": "/video/generate",
+            "story_arc": "/api/story-arc/extract"
+        }
+    }
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
@@ -403,15 +423,16 @@ async def get_demo_personas():
 # ─── Run ────────────────────────────────────────────────────────────
 
 @app.post("/ingest/live")
-async def ingest_live_articles(background_tasks: BackgroundTasks, quick: bool = False):
+async def ingest_live_articles(background_tasks: BackgroundTasks, quick: bool = True):
     """
     Ingest articles from live RSS feeds.
     
     Args:
-        quick: If True, fetch only 5 articles per category for fast initial load
-               If False, fetch 50 articles per category (comprehensive)
+        quick: If True (default), fetch only 3 articles per category for fast initial load
+               If False, fetch 20 articles per category (reduced for Render free tier memory limits)
     """
-    limit = 5 if quick else 50
+    # Reduced limits for free tier (512 MB RAM)
+    limit = 3 if quick else 20
     
     try:
         print("\n" + "=" * 70)
@@ -427,19 +448,25 @@ async def ingest_live_articles(background_tasks: BackgroundTasks, quick: bool = 
             return {"status": "no_data", "articles_collected": 0, "chunks_stored": 0}
         
         print(f"✅ Fetched {len(articles_list)} articles from RSS")
-        print(f"   Sample: {articles_list[0].title[:60]}... ({articles_list[0].date})")
+        if articles_list:
+            print(f"   Sample: {articles_list[0].title[:60]}... ({articles_list[0].date})")
         
-        # Preprocess
+        # Preprocess in smaller batches to avoid memory spike
         print("🛠️  Preprocessing articles...")
         processed = preprocess_batch(articles_list)
         
-        # Chunk
+        # Chunk in smaller batches
         print("✂️  Chunking articles...")
         chunks = knowledge_base.chunker.chunk_batch(processed)
         
-        # Store
+        # Store with batch processing (optimized for Render free tier memory)
         print(f"💾 Storing {len(chunks)} chunks in vector database...")
-        stored_count = knowledge_base.vector_store.ingest_chunks(chunks)
+        batch_size = 50 if quick else 100
+        stored_count = 0
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i:i + batch_size]
+            stored_count += knowledge_base.vector_store.ingest_chunks(batch)
+            print(f"   Stored batch {i//batch_size + 1}: {len(batch)} chunks")
         
         print("\n" + "=" * 70)
         print(f"✅ LIVE INGESTION COMPLETE")
