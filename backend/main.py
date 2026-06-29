@@ -87,7 +87,13 @@ from video_subtitles import (
 )
 
 
+import time
+
 # ─── Global State ───────────────────────────────────────────────
+
+# In-memory article cache to avoid re-scanning Qdrant on every request
+_articles_cache: dict = {"data": None, "ts": 0.0}
+ARTICLES_CACHE_TTL = 60  # seconds
 
 # Use the unified ETNexusKnowledgeBase (Phase 6 singleton)
 knowledge_base: "ETNexusKnowledgeBase" = None
@@ -618,26 +624,44 @@ async def clear_articles():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Clear failed: {str(e)}")
 
+@app.get("/ping")
+async def ping():
+    """Lightweight keep-alive endpoint — prevents Render free-tier cold starts."""
+    return {"pong": True}
+
 
 @app.get("/articles")
-def read_articles(category: str = None, limit: int = 50):
+async def read_articles(category: str = None, limit: int = 50):
     """
     Returns unique articles (deduplicated by title, sorted by date descending).
     Supports optional category filtering and limit. Falls back to demo feed if store is empty.
-    Default limit is 50 for optimal frontend performance.
+    Results are cached in-memory for 60 seconds to avoid repeated Qdrant scans.
     """
-    # Try to get real articles from vector store
+    global _articles_cache
+
+    cache_key = f"{category}:{limit}"
+    now = time.time()
+
+    # Return cached result if fresh
+    if (
+        _articles_cache.get("key") == cache_key
+        and _articles_cache.get("data")
+        and now - _articles_cache["ts"] < ARTICLES_CACHE_TTL
+    ):
+        return _articles_cache["data"]
+
+    # Fetch from vector store
     if knowledge_base:
         try:
-            # Use tag_filter to support live category clicks from frontend
             articles = knowledge_base.vector_store.get_latest_articles(limit=limit, tag_filter=category)
             if articles:
+                _articles_cache = {"key": cache_key, "data": articles, "ts": now}
                 return articles
         except Exception as e:
             print(f"Error fetching articles: {e}")
-    
+
     # Fallback: static demo feed
-    return [
+    fallback = [
         {
             "id": "1",
             "title": "Impact of EV subsidies on Tata Motors",
@@ -660,6 +684,7 @@ def read_articles(category: str = None, limit: int = 50):
             "tags": ["Energy", "Green Hydrogen", "Reliance"]
         }
     ]
+    return fallback
 
 
 @app.get("/rss-feeds")
