@@ -139,15 +139,87 @@ async def lifespan(app: FastAPI):
         print(f"📊 Vector store ready with {points} chunks")
         print("💡 Articles already loaded - backend ready for requests")
     else:
-        print("📭 Vector store is empty.")
-        print("💡 Articles will be loaded on first user request (non-blocking)")
-        # Don't auto-ingest on startup - let it happen in background on first request
+        print("📭 Vector store is empty - auto-loading articles...")
+        # Auto-load articles on startup for frontend
+        asyncio.create_task(auto_ingest_on_startup())
 
     print("✅ E-newspaper Backend ready!\n")
     yield
 
     # Cleanup
     print("👋 E-newspaper Backend shutting down...")
+
+
+async def auto_ingest_on_startup():
+    """
+    Automatically load articles on startup (tries live, falls back if fails).
+    Runs in background so startup is fast.
+    """
+    await asyncio.sleep(2)  # Wait for full initialization
+    
+    print("\n" + "=" * 70)
+    print("🔄 AUTO-INGESTION: Loading initial articles...")
+    print("=" * 70)
+    
+    try:
+        # Try live mode first (10 articles from 5 feeds)
+        print("📡 Attempting live RSS ingestion...")
+        collector = DataCollector()
+        from ingestion.data_collector import ET_RSS_FEEDS
+        limited_feeds = dict(list(ET_RSS_FEEDS.items())[:5])
+        
+        articles_list = await collector.collect_from_rss(
+            limit_per_feed=2,
+            custom_feeds=limited_feeds
+        )
+        
+        if articles_list and len(articles_list) >= 5:
+            # Process live articles
+            print(f"✅ Fetched {len(articles_list)} live articles")
+            processed = preprocess_batch(articles_list)
+            chunks = knowledge_base.chunker.chunk_batch(processed)
+            
+            # Store in small batches
+            batch_size = 25
+            stored_count = 0
+            for i in range(0, len(chunks), batch_size):
+                batch = chunks[i:i + batch_size]
+                stored_count += knowledge_base.vector_store.ingest_chunks(batch)
+                await asyncio.sleep(0.1)
+            
+            print(f"✅ AUTO-INGESTION: Loaded {len(articles_list)} articles ({stored_count} chunks)")
+            print("=" * 70 + "\n")
+            return
+        else:
+            print("⚠️ Live ingestion returned too few articles, trying fallback...")
+            
+    except Exception as e:
+        print(f"⚠️ Live ingestion failed: {e}")
+        print("📦 Falling back to offline dataset...")
+    
+    # Fallback: Load from JSON
+    try:
+        articles, _ = fetch_articles(use_fallback=True)
+        articles = articles[:10]  # Limit to 10 articles
+        
+        print(f"📦 Loading {len(articles)} articles from fallback dataset...")
+        processed = preprocess_batch(articles)
+        chunks = knowledge_base.chunker.chunk_batch(processed)
+        
+        # Store in small batches
+        batch_size = 25
+        stored_count = 0
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i:i + batch_size]
+            stored_count += knowledge_base.vector_store.ingest_chunks(batch)
+        
+        print(f"✅ AUTO-INGESTION: Loaded {len(articles)} fallback articles ({stored_count} chunks)")
+        print("=" * 70 + "\n")
+        
+    except Exception as e:
+        print(f"❌ AUTO-INGESTION FAILED: {e}")
+        print("   Frontend will show 0 articles until manual ingestion")
+        print("=" * 70 + "\n")
 
 
 # ─── FastAPI App ────────────────────────────────────────────────
