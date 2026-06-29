@@ -2,18 +2,26 @@ import type { AnalysisRequest, AnalysisResponse, Article, Persona, SearchResult,
 
 /**
  * Dynamic API Host Resolution
- * Detects the correct host (localhost vs network IP) to avoid CORS/connection errors
- * when the ET Nexus app is accessed from different devices on a local network.
+ * Detects the correct host (localhost vs network IP vs production)
  */
 const getApiBase = () => {
+  // First check for environment variable (production/Vercel)
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  
+  // Client-side detection for local development
   if (typeof window !== "undefined") {
     const hostname = window.location.hostname;
+    
     // If accessing via IP (like 172.x.x.x), use that same IP for the backend at port 8000
-    if (hostname !== "localhost" && !hostname.includes("127.0.0.1")) {
+    if (hostname !== "localhost" && !hostname.includes("127.0.0.1") && !hostname.includes("vercel.app")) {
       return `http://${hostname}:8000`;
     }
   }
-  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  
+  // Default fallback for local development
+  return "http://localhost:8000";
 };
 
 export const API_BASE = getApiBase();
