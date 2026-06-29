@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from "react";
+import { API_BASE } from "../lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ArrowLeft, Brain, Search, Loader2, 
@@ -65,19 +65,6 @@ export function StoryArcScreen({ persona, articles, onBack }: StoryArcScreenProp
   const [selectedArticleIds, setSelectedArticleIds] = useState<string[]>([]);
   const [fetchingArticles, setFetchingArticles] = useState(false);
   const [articlesDialogOpen, setArticlesDialogOpen] = useState(false);
-
-  // BOTTLENECK FIX: Detect API host dynamically to avoid 'localhost' issues on separate networks
-  const getApiBase = () => {
-    if (typeof window !== 'undefined') {
-      const hostname = window.location.hostname;
-      if (hostname !== 'localhost' && !hostname.includes('127.0.0.1')) {
-        return `http://${hostname}:8000`;
-      }
-    }
-    return 'http://localhost:8000';
-  };
-
-  const API_BASE = getApiBase();
 
   // Fetch graph data
   const fetchStoryArc = async (searchQuery?: string) => {
