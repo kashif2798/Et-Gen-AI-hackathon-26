@@ -278,18 +278,32 @@ async def ingest_articles(request: IngestRequest = None):
 @app.post("/ingest/fallback", response_model=IngestResponse)
 async def ingest_fallback():
     """
-    Ingest from the offline fallback dataset.
-    Useful for demo/hackathon when live scraping isn't reliable.
+    Ingest from the offline fallback dataset (SAFEST FOR FREE TIER).
+    Use this if live ingestion keeps crashing.
     """
     start_time = time.time()
 
     try:
+        print("\n📦 Loading fallback articles (minimal memory usage)...")
         articles, errors = fetch_articles(use_fallback=True)
+        
+        # Limit fallback to first 20 articles to save memory
+        articles = articles[:20]
+        print(f"   Using {len(articles)} articles from fallback")
+        
         processed = preprocess_batch(articles)
         chunks = knowledge_base.chunker.chunk_batch(processed)
-        stored_count = knowledge_base.vector_store.ingest_chunks(chunks)
+        
+        # Store in small batches
+        batch_size = 25
+        stored_count = 0
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i:i + batch_size]
+            stored_count += knowledge_base.vector_store.ingest_chunks(batch)
 
         elapsed = time.time() - start_time
+        print(f"✅ Fallback ingestion complete in {elapsed:.1f}s")
+        
         return IngestResponse(
             status="success (fallback)",
             articles_scraped=len(articles),
@@ -425,48 +439,66 @@ async def get_demo_personas():
 @app.post("/ingest/live")
 async def ingest_live_articles(background_tasks: BackgroundTasks, quick: bool = True):
     """
-    Ingest articles from live RSS feeds.
+    Ingest articles from live RSS feeds (OPTIMIZED FOR RENDER FREE TIER).
     
     Args:
-        quick: If True (default), fetch only 3 articles per category for fast initial load
-               If False, fetch 20 articles per category (reduced for Render free tier memory limits)
+        quick: If True (default), fetch only 2 articles per category, 5 categories max
+               If False, disabled on free tier (use Railway/upgrade instead)
     """
-    # Reduced limits for free tier (512 MB RAM)
-    limit = 3 if quick else 20
+    if not quick:
+        return {
+            "status": "error",
+            "message": "Full mode disabled on free tier due to memory limits. Use quick=true or upgrade to Starter plan.",
+            "articles_collected": 0,
+            "chunks_stored": 0
+        }
+    
+    # AGGRESSIVE limits for free tier (512 MB RAM)
+    limit = 2  # Only 2 articles per feed
+    max_feeds = 5  # Only first 5 feeds
     
     try:
         print("\n" + "=" * 70)
-        print(f"🔴 LIVE INGESTION STARTED ({'QUICK' if quick else 'FULL'} MODE)")
+        print(f"🔴 LIVE INGESTION STARTED (QUICK MODE - FREE TIER OPTIMIZED)")
         print("=" * 70)
         
         collector = DataCollector()
-        print(f"📡 Fetching {limit} articles per category from RSS feeds...")
-        articles_list = await collector.collect_from_rss(limit_per_feed=limit)
+        
+        # Get only first 5 feeds to reduce memory
+        from ingestion.data_collector import ET_RSS_FEEDS
+        limited_feeds = dict(list(ET_RSS_FEEDS.items())[:max_feeds])
+        
+        print(f"📡 Fetching {limit} articles from {max_feeds} categories (free tier mode)...")
+        articles_list = await collector.collect_from_rss(
+            limit_per_feed=limit,
+            custom_feeds=limited_feeds
+        )
         
         if not articles_list:
             print("⚠️ No articles fetched from RSS!")
             return {"status": "no_data", "articles_collected": 0, "chunks_stored": 0}
         
-        print(f"✅ Fetched {len(articles_list)} articles from RSS")
-        if articles_list:
-            print(f"   Sample: {articles_list[0].title[:60]}... ({articles_list[0].date})")
+        print(f"✅ Fetched {len(articles_list)} articles")
         
-        # Preprocess in smaller batches to avoid memory spike
+        # Preprocess in smaller batches
         print("🛠️  Preprocessing articles...")
         processed = preprocess_batch(articles_list)
         
-        # Chunk in smaller batches
+        # Chunk
         print("✂️  Chunking articles...")
         chunks = knowledge_base.chunker.chunk_batch(processed)
         
-        # Store with batch processing (optimized for Render free tier memory)
-        print(f"💾 Storing {len(chunks)} chunks in vector database...")
-        batch_size = 50 if quick else 100
+        # Store with aggressive batch processing
+        print(f"💾 Storing {len(chunks)} chunks...")
+        batch_size = 25  # Very small batches
         stored_count = 0
+        
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i:i + batch_size]
             stored_count += knowledge_base.vector_store.ingest_chunks(batch)
-            print(f"   Stored batch {i//batch_size + 1}: {len(batch)} chunks")
+            print(f"   Batch {i//batch_size + 1}: {len(batch)} chunks")
+            # Small delay to prevent memory spike
+            await asyncio.sleep(0.1)
         
         print("\n" + "=" * 70)
         print(f"✅ LIVE INGESTION COMPLETE")

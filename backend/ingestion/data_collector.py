@@ -73,7 +73,8 @@ class DataCollector:
     async def collect_from_rss(
         self, 
         rss_feeds: Dict[str, str] = None, 
-        limit_per_feed: int = 5
+        limit_per_feed: int = 5,
+        custom_feeds: Dict[str, str] = None
     ) -> List[ScrapedArticle]:
         """
         Collect articles from RSS feeds with deep scraping.
@@ -82,11 +83,15 @@ class DataCollector:
         Args:
             rss_feeds: Dict mapping category name to RSS feed URL
             limit_per_feed: Maximum articles per feed
+            custom_feeds: If provided, overrides rss_feeds (for limiting feeds)
             
         Returns:
             List of ScrapedArticle Pydantic models
         """
-        if rss_feeds is None:
+        # Use custom_feeds if provided for memory optimization
+        if custom_feeds is not None:
+            rss_feeds = custom_feeds
+        elif rss_feeds is None:
             rss_feeds = ET_RSS_FEEDS
         
         logger.info(f"📡 Starting collection from {len(rss_feeds)} RSS feeds")
